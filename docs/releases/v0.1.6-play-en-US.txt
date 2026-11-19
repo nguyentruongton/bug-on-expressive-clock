@@ -1,0 +1,1 @@
+Improved Timer spacing and responsive keypad sizing on compact screens. Timer presets are easier to see and reach, with better scrolling for larger display and font sizes. Existing animations, foldable layouts and rotation support are preserved.

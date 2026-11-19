@@ -1,6 +1,5 @@
 package app.expressiveclock.ui.screens
 
-import app.expressiveclock.ui.responsive.persistentScrollEdges
 import android.view.HapticFeedbackConstants
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.EnterExitState
@@ -63,7 +62,6 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import kotlin.math.abs
 import androidx.compose.ui.input.pointer.PointerEventPass
@@ -207,13 +205,18 @@ fun TimersScreen(
             modifier = modifier.fillMaxSize().padding(contentPadding).padding(horizontal = 20.dp),
             horizontalAlignment = Alignment.CenterHorizontally,
         ) {
-            Box(
-                Modifier.fillMaxWidth().weight(1f)
-                    .persistentScrollEdges(bodyScroll),
+            BoxWithConstraints(
+                Modifier.fillMaxWidth().weight(1f),
                 contentAlignment = Alignment.TopCenter,
             ) {
+                // Use the same width-derived readout geometry as the setup body. Prefer
+                // room for a preset row; scroll rather than reduce targets below 60dp.
+                val readoutHeight = timerReadoutGeometry((maxWidth - 16.dp).coerceAtLeast(0.dp), formatTimer(draft)).capHeight + 24.dp
+                val presetSpace = 54.dp + 24.dp * LocalDensity.current.fontScale
+                val bodySpacing = 4.dp + 6.dp + 24.dp + 18.dp + 18.dp
+                val keyHeight = timerKeyHeight(maxHeight, readoutHeight, presetSpace, bodySpacing)
                 AnimatedContent(
-                    modifier = Modifier.graphicsLayer { clip = false },
+                    modifier = Modifier.verticalScroll(bodyScroll).graphicsLayer { clip = false },
                     targetState = active,
                     transitionSpec = {
                         if (targetState) {
@@ -248,6 +251,7 @@ fun TimersScreen(
                         RunningTimerBody(timer, nowElapsedMillis, isFinished)
                     } else {
                         SetTimerBody(
+                            keyHeight = keyHeight,
                             draft = draft,
                             presets = presets,
                             onDigit = onDigit,
@@ -260,8 +264,7 @@ fun TimersScreen(
                 }
             }
 
-            Spacer(Modifier.height(if (androidx.compose.ui.platform.LocalDensity.current.fontScale > 1f ||
-                androidx.compose.ui.platform.LocalConfiguration.current.screenWidthDp < 360) 16.dp else 0.dp))
+            Spacer(Modifier.height(16.dp))
             TimerControls(
                 hasTimer = active,
                 running = running,
@@ -285,6 +288,7 @@ private enum class TimerRollDirection { UP, DOWN }
 
 @Composable
 private fun UpwardSetupDigitCell(
+    extraHeight: Dp = 52.dp,
     char: Char,
     width: Dp,
     capHeight: Dp,
@@ -313,7 +317,7 @@ private fun UpwardSetupDigitCell(
 
     val progress = animProgress.value
     val density = LocalDensity.current
-    val totalBoxHeight = capHeight + 52.dp
+    val totalBoxHeight = capHeight + extraHeight
     val heightPx = with(density) { totalBoxHeight.toPx() }
     val isAnimating = progress < 1f && oldChar != null && oldChar != newChar
 
@@ -418,6 +422,7 @@ private fun TickerTimerReadout(
     colonWidth: androidx.compose.ui.unit.Dp = 15.dp,
     numeralWidth: Float = ClockFace.TIMER_WIDTH,
     autoSize: Boolean = false,
+    setupCellExtraHeight: Dp = 52.dp,
     rollDirection: TimerRollDirection = TimerRollDirection.UP,
     enableStagger: Boolean = false,
 ) {
@@ -445,6 +450,7 @@ private fun TickerTimerReadout(
 
                     if (rollDirection == TimerRollDirection.UP) {
                         UpwardSetupDigitCell(
+                            extraHeight = setupCellExtraHeight,
                             char = char,
                             width = if (char == ':') computedColonWidth else computedDigitWidth,
                             capHeight = computedCapHeight,
@@ -493,6 +499,7 @@ private fun TickerTimerReadout(
 
                     if (rollDirection == TimerRollDirection.UP) {
                         UpwardSetupDigitCell(
+                            extraHeight = setupCellExtraHeight,
                             char = char,
                             width = (if (char == ':') colonWidth else digitWidth) * fitScale,
                             capHeight = capHeight * fitScale,
@@ -867,6 +874,7 @@ private fun ExpandedRunningTimerBody(
 
 @Composable
 private fun SetTimerBody(
+    keyHeight: Dp,
     draft: Duration,
     presets: List<Int>,
     onDigit: (Char) -> Unit,
@@ -887,16 +895,18 @@ private fun SetTimerBody(
         modifier = Modifier.fillMaxWidth().padding(horizontal = 8.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
     ) {
-        Spacer(Modifier.height(12.dp))
+        Spacer(Modifier.height(4.dp))
         TickerTimerReadout(
             text = formatTimer(draft),
             autoSize = true,
+            setupCellExtraHeight = 24.dp,
             numeralWidth = 82f,
             rollDirection = TimerRollDirection.UP,
             enableStagger = isLongPressReset,
         )
         Spacer(Modifier.height(6.dp))
         Keypad(
+            keyHeight = keyHeight,
             onDigit = { char ->
                 isLongPressReset = false
                 onDigit(char)
@@ -919,6 +929,7 @@ private fun SetTimerBody(
                 onPreset(seconds)
             },
         )
+        Spacer(Modifier.height(18.dp))
     }
 }
 
@@ -998,7 +1009,7 @@ private fun PresetButton(seconds: Int, onClick: () -> Unit, onLongClick: () -> U
 }
 
 @Composable
-private fun Keypad(onDigit: (Char) -> Unit, onBackspace: () -> Unit, onResetDraft: () -> Unit) {
+private fun Keypad(keyHeight: Dp = 76.dp, onDigit: (Char) -> Unit, onBackspace: () -> Unit, onResetDraft: () -> Unit) {
     val view = LocalView.current
     val rows = listOf("123", "456", "789")
     Column(
@@ -1007,13 +1018,14 @@ private fun Keypad(onDigit: (Char) -> Unit, onBackspace: () -> Unit, onResetDraf
     ) {
         rows.forEach { row ->
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                row.forEach { c -> DigitKey(c, onDigit, Modifier.weight(1f)) }
+                row.forEach { c -> DigitKey(c, onDigit, Modifier.weight(1f), keyHeight) }
             }
         }
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
             Spacer(Modifier.weight(1f))
-            DigitKey('0', onDigit, Modifier.weight(1f))
+            DigitKey('0', onDigit, Modifier.weight(1f), keyHeight)
             KeyBox(
+                height = keyHeight,
                 modifier = Modifier.weight(1f),
                 onClick = {
                     onBackspace()
@@ -1038,9 +1050,9 @@ private fun Keypad(onDigit: (Char) -> Unit, onBackspace: () -> Unit, onResetDraf
 }
 
 @Composable
-private fun DigitKey(digit: Char, onDigit: (Char) -> Unit, modifier: Modifier = Modifier) {
+private fun DigitKey(digit: Char, onDigit: (Char) -> Unit, modifier: Modifier = Modifier, keyHeight: Dp = 76.dp) {
     val view = LocalView.current
-    KeyBox(modifier = modifier, onClick = {
+    KeyBox(height = keyHeight, modifier = modifier, onClick = {
         onDigit(digit)
         view.performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP)
     }, label = digit.toString()) {
@@ -1056,6 +1068,7 @@ private fun DigitKey(digit: Char, onDigit: (Char) -> Unit, modifier: Modifier = 
 
 @Composable
 private fun KeyBox(
+    height: Dp = 76.dp,
     modifier: Modifier = Modifier,
     onClick: () -> Unit,
     onLongClick: (() -> Unit)? = null,
@@ -1066,7 +1079,7 @@ private fun KeyBox(
     val buttonShape = RoundedCornerShape(38.dp)
     Box(
         modifier = modifier
-            .height(76.dp)
+            .height(height)
             .padding(2.dp)
             .luminousElasticClickable(
                 shape = buttonShape,
