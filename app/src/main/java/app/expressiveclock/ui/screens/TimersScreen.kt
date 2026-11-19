@@ -835,7 +835,7 @@ private fun ExpandedRunningTimerBody(
                                 .height(56.dp),
                         ) {
                             WidePill(
-                                text = "+10s",
+                                text = "10s",
                                 icon = Icons.Rounded.Add,
                                 onClick = onAddTen,
                                 height = 56.dp,
@@ -1299,7 +1299,7 @@ private fun TimerControls(
     }
     // Intentionally mirrors the Stopwatch control morph so the Timer page uses the exact same
     // expansion rhythm, spacing, and button choreography. The expanded row is simply Pause/Resume,
-    // +10s, Cancel instead of Lap/Reset/Stop.
+    // Add ten seconds, Cancel instead of Lap/Reset/Stop.
     val expanded = hasTimer
     val expand by animateFloatAsState(
         targetValue = if (expanded) 1f else 0f,
@@ -1389,7 +1389,7 @@ private fun TimerControls(
                         }
                         Box(Modifier.weight(1f)) {
                             WidePill(
-                                text = "+10s",
+                                text = "10s",
                                 icon = Icons.Rounded.Add,
                                 onClick = onAddTen,
                                 height = TIMER_ROW_HEIGHT,

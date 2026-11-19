@@ -1,6 +1,7 @@
 package app.expressiveclock.overlay
 
 import android.content.Context
+import androidx.compose.ui.graphics.graphicsLayer
 import android.content.Intent
 import android.graphics.PixelFormat
 import android.graphics.Rect
@@ -93,6 +94,7 @@ object OverlayManager {
     private var overlayIsExitingState by mutableStateOf(false)
     private var overlayIsCalibrationState by mutableStateOf(false)
     private var overlayIsExpandedState by mutableStateOf(false)
+    private var expandedClearanceState by androidx.compose.runtime.mutableFloatStateOf(0f)
 
     // Dedicated exit request ID and visual snapshot states
     private var overlayExitRequestId by mutableStateOf(0)
@@ -440,6 +442,7 @@ object OverlayManager {
                 isCalibrationPreview = overlayIsCalibrationState,
                 isExiting = overlayIsExitingState,
                 isExpanded = overlayIsExpandedState,
+                onExpandedClearanceChanged = { expandedClearanceState = it },
                 onBoundsChanged = { bounds ->
                     if (isOverlayAttached && generation == overlayGeneration) {
                         activeIslandBounds = bounds
@@ -479,7 +482,7 @@ object OverlayManager {
                 },
                 onPauseResumeTimer = { sendAction(context, ClockActionReceiver.ACTION_TIMER_TOGGLE) },
                 onAddTenTimer = { sendAction(context, ClockActionReceiver.ACTION_TIMER_ADD) },
-                onCancelTimer = { sendAction(context, ClockActionReceiver.ACTION_TIMER_CANCEL) },
+                onCancelTimer = { sendAction(context, if (visualTimer != null) ClockActionReceiver.ACTION_TIMER_CANCEL else ClockActionReceiver.ACTION_SW_RESET) },
                 onToggleStopwatch = { sendAction(context, ClockActionReceiver.ACTION_SW_TOGGLE) },
                 onLapStopwatch = { sendAction(context, ClockActionReceiver.ACTION_SW_LAP) },
             )
@@ -490,79 +493,30 @@ object OverlayManager {
     private fun InteractionOverlayContent(context: Context) {
         val isTimerActive = overlayTimerState != null && overlayTimerState?.state != TimerState.FINISHED
         ClockTheme {
-            Box(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .clickable(
-                        indication = null,
-                        interactionSource = remember { MutableInteractionSource() },
-                    ) {
-                        if (overlayIsExpandedState) {
-                            val tab = if (isTimerActive) Notifications.TAB_TIMERS else Notifications.TAB_STOPWATCH
-                            requestOpenAppAfterAnimatedExit(tab)
-                        } else if (!overlayIsExitingState) {
-                            overlayIsExpandedState = true
-                            updateWindowParams()
-                        }
-                    },
-                contentAlignment = Alignment.Center,
-            ) {
+            Box(Modifier.fillMaxSize().clickable(indication = null,
+                interactionSource = remember { MutableInteractionSource() }) {
+                if (overlayIsExpandedState) requestOpenAppAfterAnimatedExit(
+                    if (isTimerActive) Notifications.TAB_TIMERS else Notifications.TAB_STOPWATCH)
+                else { overlayIsExpandedState = true; updateWindowParams() }
+            }) {
                 if (overlayIsExpandedState) {
-                    Box(modifier = Modifier.fillMaxSize()) {
-                        Row(
-                            modifier = Modifier
-                                .align(Alignment.CenterEnd)
-                                .padding(end = 2.dp),
-                            horizontalArrangement = Arrangement.spacedBy(6.dp),
-                            verticalAlignment = Alignment.CenterVertically,
-                        ) {
-                            if (isTimerActive) {
-                                // Button 1: Pause / Resume
-                                InteractionScallopedButton(
-                                    onClick = { sendAction(context, ClockActionReceiver.ACTION_TIMER_TOGGLE) },
-                                )
-                                // Button 2: +1m
-                                InteractionScallopedButton(
-                                    onClick = { sendAction(context, ClockActionReceiver.ACTION_TIMER_ADD) },
-                                )
-                                // Button 3: Cancel
-                                InteractionScallopedButton(
-                                    onClick = { sendAction(context, ClockActionReceiver.ACTION_TIMER_CANCEL) },
-                                )
-                            } else {
-                                // Button 1: Pause / Resume
-                                InteractionScallopedButton(
-                                    onClick = { sendAction(context, ClockActionReceiver.ACTION_SW_TOGGLE) },
-                                )
-                                // Button 2: Lap
-                                InteractionScallopedButton(
-                                    onClick = { sendAction(context, ClockActionReceiver.ACTION_SW_LAP) },
-                                )
-                                // Button 3: Cancel/Reset
-                                InteractionScallopedButton(
-                                    onClick = { sendAction(context, ClockActionReceiver.ACTION_SW_RESET) },
-                                )
-                            }
-                        }
+                    // Share the visual card's measurements instead of maintaining drifting hit boxes.
+                    Box(Modifier.fillMaxSize().padding(start = 20.dp, end = 20.dp, top = 16.dp + expandedClearanceState.dp, bottom = 16.dp)
+                        .graphicsLayer { alpha = 0f }) {
+                        ExpandedIslandCard(
+                            timer = overlayTimerState, stopwatch = overlayStopwatchState,
+                            onOpenTimerTab = { requestOpenAppAfterAnimatedExit(Notifications.TAB_TIMERS) },
+                            onOpenStopwatchTab = { requestOpenAppAfterAnimatedExit(Notifications.TAB_STOPWATCH) },
+                            onPauseResumeTimer = { sendAction(context, ClockActionReceiver.ACTION_TIMER_TOGGLE) },
+                            onAddTenTimer = { sendAction(context, ClockActionReceiver.ACTION_TIMER_ADD) },
+                            onCancelTimer = { sendAction(context, if (isTimerActive) ClockActionReceiver.ACTION_TIMER_CANCEL else ClockActionReceiver.ACTION_SW_RESET) },
+                            onToggleStopwatch = { sendAction(context, ClockActionReceiver.ACTION_SW_TOGGLE) },
+                            onLapStopwatch = { sendAction(context, ClockActionReceiver.ACTION_SW_LAP) },
+                        )
                     }
                 }
             }
         }
-    }
-
-    @Composable
-    private fun InteractionScallopedButton(
-        onClick: () -> Unit,
-    ) {
-        Box(
-            modifier = Modifier
-                .size(62.dp)
-                .clickable(
-                    indication = null,
-                    interactionSource = remember { MutableInteractionSource() },
-                    onClick = onClick,
-                ),
-        )
     }
 
     private fun updateWindowParams() {
@@ -590,11 +544,6 @@ object OverlayManager {
             return null
         }
 
-        val settings = currentSettings ?: ClockSettings()
-        val density = appContext?.resources?.displayMetrics?.density ?: 1f
-        val userX = (settings.theme.overlayOffsetX * density).roundToInt()
-        val userY = (settings.theme.overlayOffsetY * density).roundToInt()
-
         // FLAG_NOT_TOUCHABLE guarantees Layer 1 never blocks touches outside the island!
         val touchFlags = WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE or
             WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
@@ -608,9 +557,10 @@ object OverlayManager {
             PixelFormat.TRANSLUCENT,
         ).apply {
             gravity = Gravity.TOP or Gravity.CENTER_HORIZONTAL
-            x = userX
-            y = userY
+            x = 0
+            y = 0
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+                setFitInsetsTypes(0)
                 layoutInDisplayCutoutMode = WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_ALWAYS
             } else if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
                 @Suppress("DEPRECATION")
@@ -641,6 +591,7 @@ object OverlayManager {
             x = bounds.left
             y = bounds.top
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+                setFitInsetsTypes(0)
                 layoutInDisplayCutoutMode = WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_ALWAYS
             } else if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
                 @Suppress("DEPRECATION")

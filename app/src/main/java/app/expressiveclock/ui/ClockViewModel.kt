@@ -16,6 +16,7 @@ import app.expressiveclock.alarm.AlarmService
 import app.expressiveclock.alarm.Notifications
 import app.expressiveclock.alarm.TimerScheduler
 import app.expressiveclock.core.Alarm
+import app.expressiveclock.core.withAddedSeconds
 import app.expressiveclock.core.ClockTimer
 import app.expressiveclock.core.Lap
 import app.expressiveclock.core.Stopwatch
@@ -280,16 +281,10 @@ class ClockViewModel(app: Application) : AndroidViewModel(app) {
         TimerScheduler.sync(ctx, next)
     }
 
-    /** +10 s, the one adjustment a running timer needs. Extends the deadline, not a counter. */
+    /** Add ten seconds to the elapsed-realtime deadline; overlay/notification add a minute. */
     fun addTenSeconds() = viewModelScope.launch {
         val t = store.timerNow() ?: return@launch
-        val next = when (t.state) {
-            TimerState.RUNNING -> t.copy(
-                total = t.total.plusSeconds(10),
-                deadlineElapsedMillis = t.deadlineElapsedMillis + 10_000,
-            )
-            else -> t.copy(total = t.total.plusSeconds(10), pausedRemaining = t.pausedRemaining.plusSeconds(10))
-        }
+        val next = t.withAddedSeconds(10)
         store.putTimer(next)
         TimerScheduler.sync(ctx, next)
     }

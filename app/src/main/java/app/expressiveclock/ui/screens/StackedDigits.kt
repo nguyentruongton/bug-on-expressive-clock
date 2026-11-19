@@ -185,7 +185,7 @@ fun WidePill(
     contentAlpha: Float = 1f,
     glow: Boolean = true,
 ) {
-    androidx.compose.foundation.layout.BoxWithConstraints(
+    Box(
         modifier = modifier
             .then(if (fillWidth) Modifier.fillMaxWidth() else Modifier)
             .height(height)
@@ -207,15 +207,10 @@ fun WidePill(
         contentAlignment = Alignment.Center,
     ) {
         val textStyle = if (compact) MaterialTheme.typography.titleMediumEmphasized else MaterialTheme.typography.headlineSmallEmphasized
-        val measurer = androidx.compose.ui.text.rememberTextMeasurer()
-        val density = androidx.compose.ui.platform.LocalDensity.current
-        val labelWidth = measurer.measure(text, textStyle).size.width.toFloat()
-        val iconSpace = if (icon != null) (if (compact) 30.dp else 44.dp) else 0.dp
-        val room = with(density) { (maxWidth - iconSpace).toPx() }.coerceAtLeast(1f)
-        val fit = minOf(1f, room / labelWidth.coerceAtLeast(1f))
         Row(
             verticalAlignment = Alignment.CenterVertically,
-            modifier = Modifier.graphicsLayer { alpha = contentAlpha },
+            modifier = Modifier.fillMaxWidth().graphicsLayer { alpha = contentAlpha },
+            horizontalArrangement = Arrangement.Center,
         ) {
             if (icon != null) {
                 Icon(
@@ -227,12 +222,30 @@ fun WidePill(
                 if (text.isNotEmpty()) Spacer(Modifier.width(if (compact) 8.dp else 14.dp))
             }
             if (text.isNotEmpty()) {
-                Text(
-                    text,
-                    style = textStyle.copy(fontSize = textStyle.fontSize * fit),
-                    color = content,
-                    maxLines = 1,
-                )
+                FittedPillLabel(text, textStyle.copy(color = content), Modifier.weight(1f, fill = false))
+            }
+        }
+    }
+}
+
+/** Fit the measured glyph run, including letter spacing and Android's nonlinear font scaling. */
+internal fun pillLabelScale(width: Int, height: Int, availableWidth: Int, availableHeight: Int): Float =
+    minOf(1f, availableWidth.toFloat() / width.coerceAtLeast(1), availableHeight.toFloat() / height.coerceAtLeast(1))
+        .coerceAtLeast(0f)
+
+@Composable
+private fun FittedPillLabel(text: String, style: androidx.compose.ui.text.TextStyle, modifier: Modifier) {
+    androidx.compose.ui.layout.SubcomposeLayout(modifier) { constraints ->
+        val label = subcompose("label") {
+            Text(text, style = style, maxLines = 1, softWrap = false)
+        }.single().measure(androidx.compose.ui.unit.Constraints())
+        val fit = pillLabelScale(label.width, label.height, constraints.maxWidth, constraints.maxHeight)
+        val width = (label.width * fit).toInt().coerceIn(constraints.minWidth, constraints.maxWidth)
+        val height = (label.height * fit).toInt().coerceIn(constraints.minHeight, constraints.maxHeight)
+        layout(width, height) {
+            label.placeWithLayer(0, 0) {
+                scaleX = fit; scaleY = fit
+                transformOrigin = androidx.compose.ui.graphics.TransformOrigin(0f, 0f)
             }
         }
     }

@@ -970,8 +970,8 @@ private fun OverlayCalibrationDialog(
                 CalibrationControlRow(
                     label = "Horizontal offset",
                     valueDp = relX,
-                    minValue = -50f,
-                    maxValue = 50f,
+                    minValue = -200f,
+                    maxValue = 200f,
                     leftIcon = Icons.AutoMirrored.Rounded.ArrowBack,
                     rightIcon = Icons.AutoMirrored.Rounded.ArrowForward,
                     onValueChange = { rel ->
@@ -983,9 +983,9 @@ private fun OverlayCalibrationDialog(
                 // 2. Vertical offset (Y Position)
                 CalibrationControlRow(
                     label = "Vertical offset",
-                    valueDp = relY,
-                    minValue = -30f,
-                    maxValue = 30f,
+                    valueDp = relY.coerceAtLeast(-10),
+                    minValue = -10f,
+                    maxValue = 150f,
                     leftIcon = Icons.Rounded.ArrowUpward,
                     rightIcon = Icons.Rounded.ArrowDownward,
                     onValueChange = { rel ->
@@ -999,7 +999,7 @@ private fun OverlayCalibrationDialog(
                     label = "Capsule width",
                     valueDp = relW,
                     minValue = -60f,
-                    maxValue = 60f,
+                    maxValue = 300f,
                     leftIcon = Icons.Rounded.Compress,
                     rightIcon = Icons.Rounded.Expand,
                     onValueChange = { rel ->

@@ -4,6 +4,7 @@ import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
 import android.os.SystemClock
+import app.expressiveclock.core.withAddedSeconds
 import app.expressiveclock.core.ClockTimer
 import app.expressiveclock.core.Lap
 import app.expressiveclock.core.Stopwatch
@@ -80,13 +81,7 @@ class ClockActionReceiver : BroadcastReceiver() {
 
     private suspend fun timerAdd(context: Context, store: ClockStore) {
         val t = store.timerNow() ?: return
-        val next: ClockTimer = when (t.state) {
-            TimerState.RUNNING -> t.copy(
-                total = t.total.plusMinutes(1),
-                deadlineElapsedMillis = t.deadlineElapsedMillis + 60_000L,
-            )
-            else -> t.copy(total = t.total.plusMinutes(1), pausedRemaining = t.pausedRemaining.plusMinutes(1))
-        }
+        val next = t.withAddedSeconds(60)
         store.putTimer(next)
         TimerScheduler.sync(context, next)
     }

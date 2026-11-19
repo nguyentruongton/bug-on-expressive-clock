@@ -1,6 +1,14 @@
 package app.expressiveclock.overlay
 
 import android.content.Intent
+import android.view.WindowInsets
+import android.view.WindowManager
+import android.os.Build
+import androidx.compose.runtime.DisposableEffect
+import androidx.compose.ui.platform.LocalView
+import androidx.compose.foundation.layout.BoxWithConstraints
+import androidx.compose.foundation.layout.requiredSize
+import androidx.compose.ui.draw.clipToBounds
 import android.graphics.Rect
 import android.util.Log
 import androidx.compose.animation.AnimatedContent
@@ -120,6 +128,7 @@ fun DynamicIslandOverlayContent(
     isExpanded: Boolean = false,
     exitRequestId: Int = 0,
     onBoundsChanged: (Rect) -> Unit = {},
+    onExpandedClearanceChanged: (Float) -> Unit = {},
     onCollapsedSettled: () -> Unit = {},
     onExitComplete: () -> Unit = {},
     onExpandChanged: (Boolean) -> Unit,
@@ -185,12 +194,41 @@ fun DynamicIslandOverlayContent(
 
     val configuration = LocalConfiguration.current
     val screenWidthDp = configuration.screenWidthDp.dp
-    val expandedOuterMargin = topInsetDp.coerceAtLeast(12.dp)
-    val expandedWidth = (screenWidthDp - (expandedOuterMargin * 2)).coerceAtLeast(320.dp)
-    val expandedHeight = 152.dp
-
-    val collapsedWidth = (96.dp + cutoutWidthDp + widthOffsetDp).coerceIn(80.dp, 280.dp)
-    val collapsedHeight = (38.dp + heightOffsetDp).coerceIn(24.dp, 60.dp)
+    val view = LocalView.current
+    var platformInsets by remember { mutableStateOf(view.rootWindowInsets) }
+    DisposableEffect(view, configuration) {
+        platformInsets = view.rootWindowInsets
+        view.setOnApplyWindowInsetsListener { _, insets -> platformInsets = insets; insets }
+        view.requestApplyInsets()
+        onDispose { view.setOnApplyWindowInsetsListener(null) }
+    }
+    val displayDensity = LocalDensity.current.density
+    val metrics = if (Build.VERSION.SDK_INT >= 30) context.getSystemService(WindowManager::class.java).currentWindowMetrics else null
+    val insets = platformInsets ?: if (Build.VERSION.SDK_INT >= 30) metrics?.windowInsets else null
+    val displayHeight = if (Build.VERSION.SDK_INT >= 30) metrics?.bounds?.height() ?: view.resources.displayMetrics.heightPixels else view.resources.displayMetrics.heightPixels
+    val cutout = if (Build.VERSION.SDK_INT >= 28) insets?.displayCutout?.boundingRects
+        ?.filter { it.top < displayHeight / 2 }
+        ?.minByOrNull { it.top }?.let {
+            IslandCutout(it.left / displayDensity, it.top / displayDensity, it.right / displayDensity, it.bottom / displayDensity)
+        } else null
+    val reportedStatusBar = if (Build.VERSION.SDK_INT >= 30) insets?.getInsetsIgnoringVisibility(WindowInsets.Type.statusBars())?.top
+        ?.div(displayDensity) ?: 32f else topInsetDp.value.coerceAtLeast(32f)
+    val statusBar = islandStatusBarHeight(reportedStatusBar, cutout)
+    val geometry = islandGeometry(screenWidthDp.value, statusBar, cutout,
+        offsetXDp.value, offsetYDp.value - app.expressiveclock.data.FACTORY_OVERLAY_OFFSET_Y, widthOffsetDp.value, heightOffsetDp.value)
+    val expandedWidth = (screenWidthDp - 24.dp).coerceAtLeast(1.dp)
+    val expandedClearance = (maxOf(statusBar, cutout?.bottom ?: 0f) - geometry.top - 16f).coerceAtLeast(0f)
+    LaunchedEffect(expandedClearance) { onExpandedClearanceChanged(expandedClearance) }
+    val expandedHeight = (expandedClearance + 168f + (LocalDensity.current.fontScale - 1f).coerceAtLeast(0f) * 24f).dp
+    val collapsedWidth = geometry.width.dp
+    val collapsedHeight = geometry.height.dp
+    val expandedTop = geometry.top.dp
+    val islandTop by transition.animateDp(label = "islandTop", transitionSpec = { spring(stiffness = 520f, dampingRatio = .72f) }) {
+        if (it == IslandState.EXPANDED) expandedTop else geometry.top.dp
+    }
+    val islandOffsetX by transition.animateDp(label = "islandCenter", transitionSpec = { spring(stiffness = 520f, dampingRatio = .72f) }) {
+        if (it == IslandState.EXPANDED) 0.dp else (geometry.centerX - screenWidthDp.value / 2f).dp
+    }
 
     // Synchronized geometry spring spec (stiffness = 520f, dampingRatio = 0.72f)
     val geometrySpringDp = spring<Dp>(
@@ -347,9 +385,9 @@ fun DynamicIslandOverlayContent(
     }
 
     val density = LocalDensity.current
-    val topInsetPx = with(density) { topInsetDp.toPx() }
-    val offsetXPx = with(density) { offsetXDp.toPx() }
-    val offsetYPx = with(density) { offsetYDp.toPx() }
+    val topInsetPx = with(density) { islandTop.toPx() }
+    val offsetXPx = with(density) { islandOffsetX.toPx() }
+    val offsetYPx = 0f
     val collapsedHeightPx = with(density) { collapsedHeight.toPx() }
     val effectiveWidthPx = with(density) { effectiveWidth.toPx() }
     val effectiveHeightPx = with(density) { effectiveHeight.toPx() }
@@ -399,10 +437,11 @@ fun DynamicIslandOverlayContent(
         // Layer B: Content Box positioned over the drawn black island surface
         Box(
             modifier = Modifier
-                .padding(top = topInsetDp)
-                .offset(x = offsetXDp, y = offsetYDp)
+                .padding(top = islandTop)
+                .offset { androidx.compose.ui.unit.IntOffset(islandOffsetX.roundToPx(), 0) }
                 .width(effectiveWidth)
                 .height(effectiveHeight)
+                .clipToBounds()
                 .onGloballyPositioned { coordinates ->
                     val pos = coordinates.positionOnScreen()
                     val size = coordinates.size
@@ -460,13 +499,12 @@ fun DynamicIslandOverlayContent(
                     if (expandedAlpha > 0.01f) {
                         Box(
                             modifier = Modifier
-                                .width(expandedWidth)
-                                .height(expandedHeight)
+                                .requiredSize(expandedWidth, expandedHeight)
                                 .blur(expandedBlur)
                                 .graphicsLayer {
                                     alpha = expandedAlpha
                                 }
-                                .padding(horizontal = 20.dp, vertical = 16.dp),
+                                .padding(start = 20.dp, end = 20.dp, top = 16.dp + expandedClearance.dp, bottom = 16.dp),
                             contentAlignment = Alignment.Center,
                         ) {
                             ExpandedIslandCard(
@@ -522,76 +560,18 @@ private fun CompactTickerText(
     valueString: String,
     fontFamily: FontFamily,
     modifier: Modifier = Modifier,
+    countDown: Boolean = true,
 ) {
-    if (valueString.length == 3 && (valueString.endsWith('m') || valueString.endsWith('s')) && valueString[0].isDigit() && valueString[1].isDigit()) {
-        Row(
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.End,
-            modifier = modifier,
-        ) {
-            val digit1 = valueString[0]
-            val digit2 = valueString[1]
-            val suffix = valueString[2]
-
-            CompactDigitCell(char = digit1, fontFamily = fontFamily, key = 1)
-            CompactDigitCell(char = digit2, fontFamily = fontFamily, key = 2)
-
-            Text(
-                text = suffix.toString(),
-                style = MaterialTheme.typography.labelLarge.copy(
-                    fontWeight = FontWeight.Bold,
-                    fontSize = 13.sp,
-                    fontFamily = fontFamily,
-                ),
-                color = Color.White,
-            )
-        }
-    } else {
-        Text(
-            text = valueString,
-            style = MaterialTheme.typography.labelLarge.copy(
-                fontWeight = FontWeight.Bold,
-                fontSize = 13.sp,
-                fontFamily = fontFamily,
-            ),
-            color = Color.White,
-            modifier = modifier,
-        )
-    }
-}
-
-@Composable
-private fun CompactDigitCell(
-    char: Char,
-    fontFamily: FontFamily,
-    key: Int,
-) {
-    AnimatedContent(
-        targetState = char,
-        transitionSpec = {
-            val oldDigit = initialState.digitToIntOrNull()
-            val newDigit = targetState.digitToIntOrNull()
-            if (oldDigit == null || newDigit == null) {
-                fadeIn(tween(80)) togetherWith fadeOut(tween(60)) using SizeTransform(clip = true)
-            } else {
-                val increasing = newDigit > oldDigit
-                val incomingDirection = if (increasing) 1 else -1
-                val outgoingDirection = -incomingDirection
-                (slideInVertically(animationSpec = tween(120), initialOffsetY = { it * incomingDirection }) + fadeIn(tween(80))) togetherWith
-                    (slideOutVertically(animationSpec = tween(100), targetOffsetY = { it * outgoingDirection }) + fadeOut(tween(60))) using SizeTransform(clip = true)
+    val roll = mechanicalRollEnabled(valueString)
+    Row(modifier, verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.End) {
+        valueString.forEachIndexed { index, char ->
+            val cell: @Composable (Char) -> Unit = { digit ->
+                Text(digit.toString(), style = MaterialTheme.typography.labelLarge.copy(
+                    fontWeight = FontWeight.Bold, fontSize = 13.sp, fontFamily = fontFamily), color = Color.White)
             }
-        },
-        label = "compactDigit-$key",
-    ) { value ->
-        Text(
-            text = value.toString(),
-            style = MaterialTheme.typography.labelLarge.copy(
-                fontWeight = FontWeight.Bold,
-                fontSize = 13.5.sp,
-                fontFamily = fontFamily,
-            ),
-            color = Color.White,
-        )
+            if (char.isDigit()) MechanicalDigit(char, index, valueString.length, countDown, roll, content = cell)
+            else cell(char)
+        }
     }
 }
 
@@ -664,6 +644,7 @@ private fun CollapsedIslandCapsule(
             // Right side: Compact ticker text anchored 6dp from right inner edge
             CompactTickerText(
                 valueString = formatCompactDuration(elapsed),
+                countDown = false,
                 fontFamily = compactFontFamily,
                 modifier = Modifier
                     .align(Alignment.CenterEnd)
@@ -724,7 +705,7 @@ private fun ExpressiveButton(
 }
 
 @Composable
-private fun ExpandedIslandCard(
+internal fun ExpandedIslandCard(
     timer: ClockTimer?,
     stopwatch: Stopwatch?,
     onOpenTimerTab: () -> Unit,
@@ -738,24 +719,24 @@ private fun ExpandedIslandCard(
     val isTimer = timer != null && timer.state != TimerState.FINISHED
     val nowElapsed by rememberElapsedTicker(active = isTimer || (stopwatch != null && stopwatch.running))
 
-    Box(
+    Column(
         modifier = Modifier
             .fillMaxSize()
             .clickable(onClick = if (isTimer) onOpenTimerTab else onOpenStopwatchTab),
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.spacedBy(12.dp, Alignment.CenterVertically),
     ) {
         // Left side: Giant readout and "Time remaining" / "Elapsed time" label below
         Column(
             modifier = Modifier
-                .align(Alignment.CenterStart)
-                .padding(start = 2.dp),
+                .fillMaxWidth(),
             verticalArrangement = Arrangement.Center,
-            horizontalAlignment = Alignment.Start,
+            horizontalAlignment = Alignment.CenterHorizontally,
         ) {
-            TickerTimerReadout(
-                text = formatFullDuration(if (isTimer && timer != null) timer.remaining(nowElapsed) else stopwatch?.elapsed(nowElapsed) ?: Duration.ZERO),
-                capHeight = 38.dp,
-                color = Color.White,
-            )
+            BoxWithConstraints(Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) {
+                val value = formatFullDuration(if (isTimer && timer != null) timer.remaining(nowElapsed) else stopwatch?.elapsed(nowElapsed) ?: Duration.ZERO)
+                TickerTimerReadout(text = value, countDown = isTimer, capHeight = islandReadoutCap(maxWidth.value, value.length).dp, color = Color.White)
+            }
             Spacer(Modifier.height(2.dp))
             Text(
                 text = if (isTimer) "Time remaining" else "Elapsed time",
@@ -771,9 +752,8 @@ private fun ExpandedIslandCard(
         // Right side: Three expressive scalloped buttons
         Row(
             modifier = Modifier
-                .align(Alignment.CenterEnd)
-                .padding(end = 2.dp),
-            horizontalArrangement = Arrangement.spacedBy(6.dp),
+                .fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(6.dp, Alignment.CenterHorizontally),
             verticalAlignment = Alignment.CenterVertically,
         ) {
             if (isTimer && timer != null) {
@@ -795,13 +775,14 @@ private fun ExpandedIslandCard(
                     containerColor = Color(0xFFD6E2FF),
                     onClick = onAddTenTimer,
                 ) {
-                    Text(
+                    androidx.compose.foundation.text.BasicText(
                         text = "+1m",
                         style = MaterialTheme.typography.titleMedium.copy(
-                            fontWeight = FontWeight.Bold,
-                            fontSize = 17.sp,
-                        ),
-                        color = Color(0xFF0F1A2D),
+                            fontWeight = FontWeight.Bold, fontSize = 17.sp, color = Color(0xFF0F1A2D)),
+                        modifier = Modifier.padding(horizontal = 8.dp),
+                        maxLines = 1, softWrap = false,
+                        autoSize = androidx.compose.foundation.text.TextAutoSize.StepBased(
+                            minFontSize = 8.sp, maxFontSize = 17.sp, stepSize = .25.sp),
                     )
                 }
                 // Button 3: Cancel
@@ -867,52 +848,27 @@ private fun TickerTimerReadout(
     text: String,
     capHeight: Dp = 38.dp,
     color: Color = Color.White,
+    countDown: Boolean = true,
 ) {
-    Row(
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(1.5.dp),
-    ) {
+    val roll = mechanicalRollEnabled(text)
+    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(1.5.dp)) {
         text.forEachIndexed { index, char ->
-            if (char == ':') {
-                Numerals(
-                    text = ":",
-                    capHeight = capHeight,
-                    color = color,
-                    width = ClockFace.CONDENSED,
-                    weight = 500, // Medium weight: clean, modern, highly legible
-                    tracking = ClockFace.CONDENSED_TRACKING,
-                )
-            } else {
-                AnimatedContent(
-                    targetState = char,
-                    transitionSpec = {
-                        slideInVertically { height -> height / 3 } + fadeIn(tween(120)) togetherWith
-                            slideOutVertically { height -> -height / 3 } + fadeOut(tween(100))
-                    },
-                    label = "overlayDigit_$index",
-                ) { digitChar ->
-                    Numerals(
-                        text = digitChar.toString(),
-                        capHeight = capHeight,
-                        color = color,
-                        width = ClockFace.CONDENSED,
-                        weight = 500, // Medium weight
-                        tracking = ClockFace.CONDENSED_TRACKING,
-                    )
-                }
+            val cell: @Composable (Char) -> Unit = { digit ->
+                Numerals(text = digit.toString(), capHeight = capHeight, color = color,
+                    width = ClockFace.CONDENSED, weight = 500, tracking = ClockFace.CONDENSED_TRACKING)
             }
+            if (char.isDigit()) MechanicalDigit(char, index, text.length, countDown, roll, content = cell)
+            else cell(char)
         }
     }
 }
 
-private fun formatCompactDuration(duration: Duration): String {
-    val totalSecs = duration.seconds.coerceAtLeast(0)
-    val mins = totalSecs / 60
-    val secs = totalSecs % 60
-    return if (mins > 0) {
-        "%02dm".format(mins)
-    } else {
-        "%02ds".format(secs)
+internal fun formatCompactDuration(duration: Duration): String {
+    val seconds = duration.seconds.coerceAtLeast(0)
+    return when {
+        seconds >= 3600 -> "%02dh".format(seconds / 3600)
+        seconds >= 60 -> "%02dm".format(seconds / 60)
+        else -> "%02ds".format(seconds)
     }
 }
 

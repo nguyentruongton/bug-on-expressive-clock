@@ -1,5 +1,12 @@
 package app.expressiveclock.ui
 
+import androidx.compose.foundation.pager.HorizontalPager
+import androidx.compose.foundation.pager.PagerDefaults
+import androidx.compose.foundation.pager.rememberPagerState
+import androidx.compose.runtime.snapshotFlow
+import kotlinx.coroutines.flow.drop
+import kotlinx.coroutines.flow.distinctUntilChanged
+
 
 import android.Manifest
 import android.os.Build
@@ -341,20 +348,31 @@ fun ClockApp(startTab: String? = null, startRequestId: Long = 0L, vm: ClockViewM
             )
 
           GlassBackdrop(Modifier.fillMaxSize()) {
-            AnimatedContent(
-                targetState = contentTab,
-                transitionSpec = {
-                    val forward = targetState.ordinal > initialState.ordinal
-                    slideInHorizontally(
-                        initialOffsetX = { width -> if (forward) width else -width },
-                    ) + fadeIn() togetherWith
-                        slideOutHorizontally(
-                            targetOffsetX = { width -> if (forward) -width else width },
-                        ) + fadeOut()
-                },
-                label = "tab",
-            ) { current ->
-                when (current) {
+            val pagerState = rememberPagerState(initialPage = activeTab.ordinal, pageCount = { Tab.entries.size })
+            var pagerNavigationTarget by remember { mutableStateOf<Int?>(null) }
+            var pagerNavigationRequest by remember { mutableIntStateOf(0) }
+            LaunchedEffect(activeTab, wideClockPages, pagerNavigationRequest) {
+                if (!wideClockPages) {
+                    val destination = activeTab.ordinal
+                    pagerNavigationTarget = destination
+                    // A return tap can target settledPage while the pager is still between pages.
+                    // Cancel/retarget immediately instead of leaving that interrupted scroll unfinished.
+                    if (pagerState.currentPage != destination || pagerState.currentPageOffsetFraction != 0f) {
+                        pagerState.animateScrollToPage(destination,
+                            animationSpec = spring(stiffness = 380f, dampingRatio = .86f))
+                    }
+                    pagerNavigationTarget = null
+                } else pagerNavigationTarget = null
+            }
+            LaunchedEffect(pagerState, wideClockPages) {
+                if (!wideClockPages) snapshotFlow { pagerState.settledPage to pagerNavigationTarget }
+                    .distinctUntilChanged().drop(1).collect { (page, requested) ->
+                        // Intermediate programmatic settlements must not overwrite a newer tap.
+                        if (requested == null && !pagerState.isScrollInProgress) tab = Tab.entries[page]
+                    }
+            }
+            val pageContent: @Composable (Tab) -> Unit = { current ->
+                when (if (current == Tab.WORLD) Tab.ALARMS else current) {
                     Tab.ALARMS -> {
                         val alarms by vm.alarms.collectAsStateWithLifecycle()
                         val alarmCards: @Composable (Modifier, Boolean, PaddingValues) -> Unit = { layout, single, insets ->
@@ -390,11 +408,8 @@ fun ClockApp(startTab: String? = null, startRequestId: Long = 0L, vm: ClockViewM
                                 },
                                 modifier = Modifier.padding(body))
                         } else {
-                            AnimatedContent(clockDestination, transitionSpec = {
-                                val forward = targetState.ordinal > initialState.ordinal
-                                slideInHorizontally { if (forward) it else -it } + fadeIn() togetherWith
-                                    slideOutHorizontally { if (forward) -it else it } + fadeOut()
-                            }, label = "phoneClockTab") { phoneTab ->
+                            val phoneTab = current
+                            androidx.compose.runtime.key(phoneTab) {
                                 if (phoneTab == Tab.WORLD) app.expressiveclock.ui.screens.WorldClockPanel(
                                     flatPortrait = true, cities = cities, selectedZoneId = selectedWorldCityZoneId,
                                     onSelectCity = { selectedWorldCityZoneId = it.zone.id },
@@ -451,10 +466,35 @@ fun ClockApp(startTab: String? = null, startRequestId: Long = 0L, vm: ClockViewM
                 }
             }
 
+            if (wideClockPages) {
+                AnimatedContent(targetState = contentTab, transitionSpec = {
+                    val forward = targetState.ordinal > initialState.ordinal
+                    slideInHorizontally { if (forward) it else -it } + fadeIn() togetherWith
+                        slideOutHorizontally { if (forward) -it else it } + fadeOut()
+                }, label = "wideTab") { pageContent(it) }
+            } else {
+                HorizontalPager(
+                    state = pagerState,
+                    beyondViewportPageCount = Tab.entries.size - 1,
+                    key = { Tab.entries[it].key },
+                    userScrollEnabled = !showSettings && !showAddCitySheet && !showNewAlarmPicker && editing == null &&
+                        alarmSelectionCount == 0 && worldPresentation.deletionSelection.value.isEmpty(),
+                    flingBehavior = PagerDefaults.flingBehavior(pagerState,
+                        snapAnimationSpec = spring(stiffness = 380f, dampingRatio = .86f)),
+                    modifier = Modifier.fillMaxSize(),
+                ) { pageContent(Tab.entries[it]) }
+            }
+
             ClockDock(
                 destinations = listOf(Tab.ALARMS, Tab.WORLD, Tab.TIMERS, Tab.STOPWATCH),
                 selected = activeTab,
-                onSelect = { tab = it },
+                onSelect = {
+                    if (!wideClockPages) {
+                        pagerNavigationTarget = it.ordinal
+                        pagerNavigationRequest++
+                    }
+                    tab = it
+                },
                 // Timer and Stopwatch retain their existing in-content actions.
                 showAdd = activeTab == Tab.ALARMS || activeTab == Tab.WORLD,
                 addLabel = if (activeTab == Tab.WORLD) "Add Location" else "Add alarm",
