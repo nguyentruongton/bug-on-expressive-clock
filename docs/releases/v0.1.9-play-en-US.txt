@@ -1,0 +1,8 @@
+What's new:
+• Restored the original expanded Timer and Stopwatch island design.
+• Improved spacing for compact screens, long times and larger fonts.
+• Removed excess top space in camera-cutout overlap mode.
+• Made the bottom navigation follow page swipes immediately.
+• Improved rapid tab switching and interrupted swipe navigation.
+
+Enjoy!

@@ -45,6 +45,7 @@ import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.IntOffset
 
 /**
  * Fixed-stage dock. The add button never changes the measured width of the stage, so moving from
@@ -61,6 +62,7 @@ fun ClockDock(
     onAdd: () -> Unit,
     modifier: Modifier = Modifier,
     enableGlow: Boolean = true,
+    pagePosition: (() -> Float)? = null,
 ) {
     val dark = MaterialTheme.colorScheme.surface.luminance() < 0.5f
     val blue = MaterialTheme.colorScheme.primary
@@ -119,17 +121,21 @@ fun ClockDock(
                     val selectedIndex = destinations.indexOf(selected).coerceAtLeast(0)
                     val itemWidth = maxWidth / destinations.size
                     val indicatorSize = minOf(50.dp, ((dockWidth - 16.dp) / 4 - 4.dp).coerceAtLeast(28.dp))
-                    val selectedOffset by animateDpAsState(
+                    val selectedOffset = if (pagePosition == null) animateDpAsState(
                         targetValue = itemWidth * selectedIndex + (itemWidth - indicatorSize) / 2,
                         animationSpec = spring(dampingRatio = 0.84f, stiffness = 600f),
                         label = "dockIndicator",
-                    )
+                    ) else null
                     Box(
                         modifier = Modifier
-                            .offset(
-                                x = selectedOffset,
-                                y = (DOCK_HEIGHT - indicatorSize) / 2,
-                            )
+                            .offset {
+                                // Read continuous pager progress during placement, not
+                                // composition. No extra spring trails the user's finger.
+                                val position = pagePosition?.invoke()?.coerceIn(0f, destinations.lastIndex.toFloat())
+                                val x = if (position == null) selectedOffset!!.value
+                                    else itemWidth * position + (itemWidth - indicatorSize) / 2
+                                IntOffset(x.roundToPx(), ((DOCK_HEIGHT - indicatorSize) / 2).roundToPx())
+                            }
                             .size(indicatorSize)
                             .clip(CircleShape)
                             .background(

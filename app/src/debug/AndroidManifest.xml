@@ -1,5 +1,5 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
-    <application><activity android:name="app.expressiveclock.IslandDisplayProbeActivity" android:exported="true" android:configChanges="orientation|screenSize|screenLayout" /></application>
+    <application><activity android:name="app.expressiveclock.ExpandedIslandProbeActivity" android:theme="@style/Theme.MaterialClock.App" android:exported="true" android:configChanges="orientation|screenSize|screenLayout" /><activity android:name="app.expressiveclock.IslandDisplayProbeActivity" android:exported="true" android:configChanges="orientation|screenSize|screenLayout" /></application>
     <instrumentation android:name="app.expressiveclock.CalibrationProbe" android:targetPackage="app.expressiveclock.debug" />
     <instrumentation android:name="app.expressiveclock.AlarmProbe" android:targetPackage="app.expressiveclock.debug" android:label="ADB alarm regression probe" />
     <instrumentation android:name="app.expressiveclock.LayoutProbe" android:targetPackage="app.expressiveclock.debug" android:label="Opt-in ADB layout fixture" />

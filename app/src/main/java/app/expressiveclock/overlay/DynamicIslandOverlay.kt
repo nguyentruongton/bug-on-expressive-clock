@@ -88,6 +88,9 @@ import androidx.compose.ui.layout.positionOnScreen
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.text.rememberTextMeasurer
+import androidx.compose.ui.unit.Density
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.coerceIn
@@ -221,11 +224,11 @@ fun DynamicIslandOverlayContent(
     val geometry = islandGeometry(screenWidthDp.value, statusBar, cutout,
         offsetXDp.value, offsetYDp.value - app.expressiveclock.data.FACTORY_OVERLAY_OFFSET_Y, widthOffsetDp.value, heightOffsetDp.value, screenHeight = display.height / display.density, alignment = alignment)
     val expandedWidth = islandExpandedWidth(screenWidthDp.value, display.height / display.density).dp
-    val expandedBaseHeight = 168f + (LocalDensity.current.fontScale - 1f).coerceAtLeast(0f) * 24f
+    val expandedBaseHeight = 152f + (LocalDensity.current.fontScale - 1f).coerceAtLeast(0f) * 40f
     val expandedAnchor = if (expandedPosition == app.expressiveclock.data.IslandExpandedPosition.BELOW_STATUS_BAR)
         maxOf(geometry.top, statusBar + 6f) else geometry.top
     val expandedTop = islandExpandedTop(expandedAnchor, display.height / display.density, expandedBaseHeight).dp
-    val expandedClearance = (maxOf(statusBar, cutout?.bottom ?: 0f) - expandedTop.value - 16f).coerceAtLeast(0f)
+    val expandedClearance = expandedContentClearance(expandedPosition, statusBar, cutout?.bottom ?: 0f, expandedTop.value)
     LaunchedEffect(expandedClearance) { onExpandedClearanceChanged(expandedClearance) }
     val expandedHeight = (expandedClearance + expandedBaseHeight).dp
     val collapsedWidth = geometry.width.dp
@@ -512,7 +515,8 @@ fun DynamicIslandOverlayContent(
                                 .graphicsLayer {
                                     alpha = expandedAlpha
                                 }
-                                .padding(start = 20.dp, end = 20.dp, top = 16.dp + expandedClearance.dp, bottom = 16.dp),
+                                .padding(horizontal = (expandedWidth.value * .055f).coerceIn(10f, 24f).dp)
+                                .padding(top = 16.dp + expandedClearance.dp, bottom = 16.dp),
                             contentAlignment = Alignment.Center,
                         ) {
                             ExpandedIslandCard(
@@ -699,11 +703,12 @@ private val ScallopedShape: Shape = GenericShape { size, _ ->
 private fun ExpressiveButton(
     containerColor: Color,
     onClick: () -> Unit,
+    buttonSize: Dp = 62.dp,
     content: @Composable () -> Unit,
 ) {
     Box(
         modifier = Modifier
-            .size(62.dp)
+            .size(buttonSize)
             .clip(ScallopedShape)
             .background(containerColor)
             .clickable(onClick = onClick),
@@ -728,122 +733,156 @@ internal fun ExpandedIslandCard(
     val isTimer = timer != null && timer.state != TimerState.FINISHED
     val nowElapsed by rememberElapsedTicker(active = isTimer || (stopwatch != null && stopwatch.running))
 
-    Column(
-        modifier = Modifier
-            .fillMaxSize()
-            .clickable(onClick = if (isTimer) onOpenTimerTab else onOpenStopwatchTab),
-        horizontalAlignment = Alignment.CenterHorizontally,
-        verticalArrangement = Arrangement.spacedBy(12.dp, Alignment.CenterVertically),
-    ) {
-        // Left side: Giant readout and "Time remaining" / "Elapsed time" label below
-        Column(
-            modifier = Modifier
-                .fillMaxWidth(),
-            verticalArrangement = Arrangement.Center,
-            horizontalAlignment = Alignment.CenterHorizontally,
-        ) {
-            BoxWithConstraints(Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) {
-                val value = formatFullDuration(if (isTimer && timer != null) timer.remaining(nowElapsed) else stopwatch?.elapsed(nowElapsed) ?: Duration.ZERO)
-                TickerTimerReadout(text = value, countDown = isTimer, capHeight = islandReadoutCap(maxWidth.value, value.length).dp, color = Color.White)
+    val value = formatFullDuration(if (isTimer && timer != null) timer.remaining(nowElapsed) else stopwatch?.elapsed(nowElapsed) ?: Duration.ZERO)
+    val density = LocalDensity.current
+    val measurer = rememberTextMeasurer()
+    BoxWithConstraints(Modifier.fillMaxSize()
+        .clickable(onClick = if (isTimer) onOpenTimerTab else onOpenStopwatchTab)) {
+        // Measure each cell, including the widest digit, with the same physical
+        // cap-height typography used by the ticker. Reserve inter-cell spacing too.
+        val neutralDensity = Density(density.density, 1f)
+        val sizing = remember(maxWidth, value.length, density.density, measurer) {
+            fun widthAt(cap: Float): Float {
+                val style = ClockFace.numerals(cap.dp, ClockFace.CONDENSED, 500, true, ClockFace.CONDENSED_TRACKING, false)
+                val digit = ('0'..'9').maxOf { measurer.measure(it.toString(), style, density = neutralDensity).size.width }
+                val colon = measurer.measure(":", style, density = neutralDensity).size.width
+                return (value.count { it.isDigit() } * digit + value.count { !it.isDigit() } * colon) / density.density + (value.length - 1) * 1.5f
             }
-            Spacer(Modifier.height(2.dp))
-            Text(
-                text = if (isTimer) "Time remaining" else "Elapsed time",
-                style = MaterialTheme.typography.labelMedium.copy(
-                    fontWeight = FontWeight.Medium,
-                    fontSize = 13.sp,
-                ),
-                color = Color.White.copy(alpha = 0.65f),
-                modifier = Modifier.padding(start = 2.dp),
-            )
+            val layout = expandedCardLayout(maxWidth.value, widthAt(38f), widthAt(20f))
+            var low = 1f
+            var high = 38f
+            repeat(12) {
+                val middle = (low + high) / 2f
+                if (widthAt(middle) <= layout.readoutWidth - 2f) low = middle else high = middle
+            }
+            layout to low
         }
-
-        // Right side: Three expressive scalloped buttons
-        Row(
-            modifier = Modifier
-                .fillMaxWidth(),
-            horizontalArrangement = Arrangement.spacedBy(6.dp, Alignment.CenterHorizontally),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            if (isTimer && timer != null) {
-                val running = timer.state == TimerState.RUNNING
-                // Button 1: Pause / Resume
-                ExpressiveButton(
-                    containerColor = Color(0xFF2C3242),
-                    onClick = onPauseResumeTimer,
-                ) {
-                    Icon(
-                        imageVector = if (running) Icons.Rounded.Pause else Icons.Rounded.PlayArrow,
-                        contentDescription = if (running) "Pause" else "Resume",
-                        tint = Color.White,
-                        modifier = Modifier.size(28.dp),
-                    )
+        val layout = sizing.first
+        val capHeight = sizing.second
+        val readout: @Composable () -> Unit = {
+            Column(Modifier.width(layout.readoutWidth.dp), verticalArrangement = Arrangement.Center,
+                horizontalAlignment = Alignment.Start) {
+                // Numerals use a physical cap height; keep font scaling from breaking
+                // that ink box. Captions and control labels still respect accessibility scale.
+                CompositionLocalProvider(LocalDensity provides neutralDensity) {
+                    TickerTimerReadout(text = value, countDown = isTimer, capHeight = capHeight.dp, color = Color.White)
                 }
-                // Button 2: +1m
-                ExpressiveButton(
-                    containerColor = Color(0xFFD6E2FF),
-                    onClick = onAddTenTimer,
-                ) {
-                    androidx.compose.foundation.text.BasicText(
-                        text = "+1m",
-                        style = MaterialTheme.typography.titleMedium.copy(
-                            fontWeight = FontWeight.Bold, fontSize = 17.sp, color = Color(0xFF0F1A2D)),
-                        modifier = Modifier.padding(horizontal = 8.dp),
-                        maxLines = 1, softWrap = false,
-                        autoSize = androidx.compose.foundation.text.TextAutoSize.StepBased(
-                            minFontSize = 8.sp, maxFontSize = 17.sp, stepSize = .25.sp),
-                    )
+                Spacer(Modifier.height(2.dp))
+                androidx.compose.foundation.text.BasicText(
+                    if (isTimer) "Time remaining" else "Elapsed time",
+                    style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.Medium,
+                        fontSize = 13.sp, color = Color.White.copy(alpha = .65f)),
+                    maxLines = 2,
+                    autoSize = androidx.compose.foundation.text.TextAutoSize.StepBased(
+                        minFontSize = 10.sp, maxFontSize = 13.sp, stepSize = .25.sp))
+            }
+        }
+        val controls: @Composable () -> Unit = {
+            Row(
+                modifier = Modifier,
+                horizontalArrangement = Arrangement.spacedBy(layout.controlGap.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                if (isTimer && timer != null) {
+                    val running = timer.state == TimerState.RUNNING
+                    // Button 1: Pause / Resume
+                    ExpressiveButton(
+                        buttonSize = layout.button.dp,
+                        containerColor = Color(0xFF2C3242),
+                        onClick = onPauseResumeTimer,
+                    ) {
+                        Icon(
+                            imageVector = if (running) Icons.Rounded.Pause else Icons.Rounded.PlayArrow,
+                            contentDescription = if (running) "Pause" else "Resume",
+                            tint = Color.White,
+                            modifier = Modifier.size(28.dp),
+                        )
+                    }
+                    // Button 2: +1m
+                    ExpressiveButton(
+                        buttonSize = layout.button.dp,
+                        containerColor = Color(0xFFD6E2FF),
+                        onClick = onAddTenTimer,
+                    ) {
+                        androidx.compose.foundation.text.BasicText(
+                            text = "+1m",
+                            style = MaterialTheme.typography.titleMedium.copy(
+                                fontWeight = FontWeight.Bold, fontSize = 17.sp, color = Color(0xFF0F1A2D)),
+                            modifier = Modifier.padding(horizontal = 8.dp),
+                            maxLines = 1, softWrap = false,
+                            autoSize = androidx.compose.foundation.text.TextAutoSize.StepBased(
+                                minFontSize = 8.sp, maxFontSize = 17.sp, stepSize = .25.sp),
+                        )
+                    }
+                    // Button 3: Cancel
+                    ExpressiveButton(
+                        buttonSize = layout.button.dp,
+                        containerColor = Color(0xFF5B2B31),
+                        onClick = onCancelTimer,
+                    ) {
+                        Icon(
+                            imageVector = Icons.Rounded.Close,
+                            contentDescription = "Cancel",
+                            tint = Color(0xFFFFB4AB),
+                            modifier = Modifier.size(28.dp),
+                        )
+                    }
+                } else if (stopwatch != null) {
+                    val running = stopwatch.running
+                    // Button 1: Pause / Resume
+                    ExpressiveButton(
+                        buttonSize = layout.button.dp,
+                        containerColor = Color(0xFF2C3242),
+                        onClick = onToggleStopwatch,
+                    ) {
+                        Icon(
+                            imageVector = if (running) Icons.Rounded.Pause else Icons.Rounded.PlayArrow,
+                            contentDescription = if (running) "Pause" else "Start",
+                            tint = Color.White,
+                            modifier = Modifier.size(28.dp),
+                        )
+                    }
+                    // Button 2: Lap
+                    ExpressiveButton(
+                        buttonSize = layout.button.dp,
+                        containerColor = Color(0xFFD6E2FF),
+                        onClick = onLapStopwatch,
+                    ) {
+                        Icon(
+                            imageVector = Icons.Rounded.Flag,
+                            contentDescription = "Lap",
+                            tint = Color(0xFF0F1A2D),
+                            modifier = Modifier.size(28.dp),
+                        )
+                    }
+                    // Button 3: Cancel
+                    ExpressiveButton(
+                        buttonSize = layout.button.dp,
+                        containerColor = Color(0xFF5B2B31),
+                        onClick = onCancelTimer,
+                    ) {
+                        Icon(
+                            imageVector = Icons.Rounded.Close,
+                            contentDescription = "Cancel",
+                            tint = Color(0xFFFFB4AB),
+                            modifier = Modifier.size(28.dp),
+                        )
+                    }
                 }
-                // Button 3: Cancel
-                ExpressiveButton(
-                    containerColor = Color(0xFF5B2B31),
-                    onClick = onCancelTimer,
-                ) {
-                    Icon(
-                        imageVector = Icons.Rounded.Close,
-                        contentDescription = "Cancel",
-                        tint = Color(0xFFFFB4AB),
-                        modifier = Modifier.size(28.dp),
-                    )
-                }
-            } else if (stopwatch != null) {
-                val running = stopwatch.running
-                // Button 1: Pause / Resume
-                ExpressiveButton(
-                    containerColor = Color(0xFF2C3242),
-                    onClick = onToggleStopwatch,
-                ) {
-                    Icon(
-                        imageVector = if (running) Icons.Rounded.Pause else Icons.Rounded.PlayArrow,
-                        contentDescription = if (running) "Pause" else "Start",
-                        tint = Color.White,
-                        modifier = Modifier.size(28.dp),
-                    )
-                }
-                // Button 2: Lap
-                ExpressiveButton(
-                    containerColor = Color(0xFFD6E2FF),
-                    onClick = onLapStopwatch,
-                ) {
-                    Icon(
-                        imageVector = Icons.Rounded.Flag,
-                        contentDescription = "Lap",
-                        tint = Color(0xFF0F1A2D),
-                        modifier = Modifier.size(28.dp),
-                    )
-                }
-                // Button 3: Cancel
-                ExpressiveButton(
-                    containerColor = Color(0xFF5B2B31),
-                    onClick = onCancelTimer,
-                ) {
-                    Icon(
-                        imageVector = Icons.Rounded.Close,
-                        contentDescription = "Cancel",
-                        tint = Color(0xFFFFB4AB),
-                        modifier = Modifier.size(28.dp),
-                    )
-                }
+            }
+        }
+        if (layout.stacked) {
+            // Only exceptionally narrow cards use a compact version of the same
+            // hierarchy: left readout above right-aligned controls.
+            Column(Modifier.fillMaxSize(), verticalArrangement = Arrangement.spacedBy(8.dp, Alignment.CenterVertically)) {
+                readout()
+                Box(Modifier.fillMaxWidth(), contentAlignment = Alignment.CenterEnd) { controls() }
+            }
+        } else {
+            Row(Modifier.fillMaxSize(), horizontalArrangement = Arrangement.spacedBy(layout.groupGap.dp),
+                verticalAlignment = Alignment.CenterVertically) {
+                readout()
+                controls()
             }
         }
     }

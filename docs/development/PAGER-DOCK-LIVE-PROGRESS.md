@@ -1,0 +1,13 @@
+# Bottom dock live swipe progress
+
+Reviewed the current main working tree and preserved all existing expanded-island work. Changed ClockApp.kt and ClockDock.kt only for the implementation; created this report. No files deleted, versions changed or GitHub writes made.
+
+Cause: compact navigation updated tab only after settledPage and scrolling completion, then the dock started an independent spring towards that selected tab. This created a visible wait followed by a second animation.
+
+Compact ClockDock now receives a lazy fractional pager position, currentPage+currentPageOffsetFraction, clamped to the destination range. The indicator reads it during placement, so it tracks dragging and pager settling directly without per-frame page composition or a trailing indicator spring. Icon selection and Add action reflect currentPage during manual swiping; programmatic requests retain their tapped selection. Committed page state still updates on settlement, avoiding feedback that would turn a swipe into a new navigation animation. The observer includes isScrollInProgress so the final false state cannot be missed. Programmatic scroll requests release their guard in finally when cancelled by user input, without clearing newer taps. Wide/two-pane navigation continues to use its existing dock spring and has no pager-progress override.
+
+assembleDebug,testDebugUnitTest,lintDebug passed.96 existing JVM tests passed;12 Python regressions and diff whitespace check passed. No implementation-mirroring unit test added for this visual/gesture-only change. S25 physical main-app checks: partial swipe before/after while pointer remained down; reversal/snapback; forward and backward through all four destinations; rapid Timer/Stopwatch taps; tap animation interrupted by swipe followed by successful next swipe; vertical scroll without tab switch; return to original Alarms tab. No Timer/Stopwatch action controls or stored settings were modified. Existing child gesture gates and unfolded two-pane source paths were retained. Fold received the updated APK, but its wide-layout interactions were not re-run in this focused follow-up.
+
+Evidence:/Users/sambeckman/Downloads/ExpressiveClock-live-swipe-dock-20261120-185316/evidence. before-partial.png shows page movement with indicator still at Alarms; after-partial.png shows the same drag with indicator following between Alarms and World Clock. Other images cover completed/reversed/rapid/interrupted navigation.
+
+APK:/Users/sambeckman/Downloads/ExpressiveClock-live-swipe-dock-20261120-185316/ExpressiveClock-debug.apk. Installed on S25 and Pixel Fold. Branch main; all current work remains local, unstaged/uncommitted, including previous island fixes.

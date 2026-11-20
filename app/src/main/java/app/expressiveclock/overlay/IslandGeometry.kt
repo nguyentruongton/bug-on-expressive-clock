@@ -73,3 +73,24 @@ internal fun verticalSliderPosition(offset: Float, minimum: Float, maximum: Floa
 internal fun verticalSliderOffset(position: Float, minimum: Float, maximum: Float): Float =
     if (position < 0f) -position.coerceAtLeast(-1f) * minimum.coerceAtMost(0f)
     else position.coerceAtMost(1f) * maximum.coerceAtLeast(0f)
+
+
+internal data class ExpandedCardLayout(val button: Float, val controlGap: Float, val groupGap: Float,
+    val readoutWidth: Float, val stacked: Boolean)
+
+/** Allocate real, disjoint regions. Controls never shrink below a 48dp touch target. */
+internal fun expandedCardLayout(width: Float, idealReadout: Float, minimumReadout: Float): ExpandedCardLayout {
+    val controlGap = (width * .017f).coerceIn(4f, 8f)
+    val groupGap = (width * .03f).coerceIn(8f, 14f)
+    val button = ((width - idealReadout - groupGap - controlGap * 2) / 3).coerceIn(48f, 62f)
+    val readout = width - 3 * button - 2 * controlGap - groupGap
+    val stacked = readout < minimumReadout
+    return ExpandedCardLayout(button, controlGap, groupGap, if (stacked) width else readout, stacked)
+}
+
+
+/** Overlap is intentional: do not also reserve the entire status-bar band inside the card. */
+internal fun expandedContentClearance(position: app.expressiveclock.data.IslandExpandedPosition,
+    statusBar: Float, cutoutBottom: Float, cardTop: Float): Float =
+    if (position == app.expressiveclock.data.IslandExpandedPosition.OVERLAP_CUTOUT) 0f
+    else (maxOf(statusBar, cutoutBottom) - cardTop - 16f).coerceAtLeast(0f)

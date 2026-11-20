@@ -357,18 +357,24 @@ fun ClockApp(startTab: String? = null, startRequestId: Long = 0L, vm: ClockViewM
                     pagerNavigationTarget = destination
                     // A return tap can target settledPage while the pager is still between pages.
                     // Cancel/retarget immediately instead of leaving that interrupted scroll unfinished.
-                    if (pagerState.currentPage != destination || pagerState.currentPageOffsetFraction != 0f) {
-                        pagerState.animateScrollToPage(destination,
-                            animationSpec = spring(stiffness = 380f, dampingRatio = .86f))
+                    val request = pagerNavigationRequest
+                    try {
+                        if (pagerState.currentPage != destination || pagerState.currentPageOffsetFraction != 0f) {
+                            pagerState.animateScrollToPage(destination,
+                                animationSpec = spring(stiffness = 380f, dampingRatio = .86f))
+                        }
+                    } finally {
+                        // A user drag can cancel the animation. Release that request,
+                        // without clearing a newer bottom-bar tap that replaced it.
+                        if (request == pagerNavigationRequest) pagerNavigationTarget = null
                     }
-                    pagerNavigationTarget = null
                 } else pagerNavigationTarget = null
             }
             LaunchedEffect(pagerState, wideClockPages) {
-                if (!wideClockPages) snapshotFlow { pagerState.settledPage to pagerNavigationTarget }
-                    .distinctUntilChanged().drop(1).collect { (page, requested) ->
+                if (!wideClockPages) snapshotFlow { Triple(pagerState.settledPage, pagerNavigationTarget, pagerState.isScrollInProgress) }
+                    .distinctUntilChanged().drop(1).collect { (page, requested, scrolling) ->
                         // Intermediate programmatic settlements must not overwrite a newer tap.
-                        if (requested == null && !pagerState.isScrollInProgress) tab = Tab.entries[page]
+                        if (requested == null && !scrolling) tab = Tab.entries[page]
                     }
             }
             val pageContent: @Composable (Tab) -> Unit = { current ->
@@ -485,9 +491,14 @@ fun ClockApp(startTab: String? = null, startRequestId: Long = 0L, vm: ClockViewM
                 ) { pageContent(Tab.entries[it]) }
             }
 
+            val dockTab = if (!wideClockPages && pagerNavigationTarget == null)
+                Tab.entries[pagerState.currentPage] else activeTab
             ClockDock(
                 destinations = listOf(Tab.ALARMS, Tab.WORLD, Tab.TIMERS, Tab.STOPWATCH),
-                selected = activeTab,
+                selected = dockTab,
+                pagePosition = if (wideClockPages) null else {
+                    { pagerState.currentPage + pagerState.currentPageOffsetFraction }
+                },
                 onSelect = {
                     if (!wideClockPages) {
                         pagerNavigationTarget = it.ordinal
@@ -496,9 +507,9 @@ fun ClockApp(startTab: String? = null, startRequestId: Long = 0L, vm: ClockViewM
                     tab = it
                 },
                 // Timer and Stopwatch retain their existing in-content actions.
-                showAdd = activeTab == Tab.ALARMS || activeTab == Tab.WORLD,
-                addLabel = if (activeTab == Tab.WORLD) "Add Location" else "Add alarm",
-                onAdd = { if (activeTab == Tab.WORLD) showAddCitySheet = true else showNewAlarmPicker = true },
+                showAdd = dockTab == Tab.ALARMS || dockTab == Tab.WORLD,
+                addLabel = if (dockTab == Tab.WORLD) "Add Location" else "Add alarm",
+                onAdd = { if (dockTab == Tab.WORLD) showAddCitySheet = true else showNewAlarmPicker = true },
                 modifier = Modifier
                     .align(Alignment.BottomCenter)
                     .navigationBarsPadding()
