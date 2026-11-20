@@ -22,6 +22,11 @@ class OverlayAccessibilityService : AccessibilityService() {
         // Intentionally empty: no event processing or screen inspection.
     }
 
+    override fun onConfigurationChanged(newConfig: android.content.res.Configuration) {
+        super.onConfigurationChanged(newConfig)
+        IslandDisplayMonitor.refresh()
+    }
+
     override fun onInterrupt() {
         // Intentionally empty.
     }

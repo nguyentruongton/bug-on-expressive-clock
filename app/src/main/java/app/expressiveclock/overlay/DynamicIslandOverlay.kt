@@ -4,6 +4,7 @@ import android.content.Intent
 import android.view.WindowInsets
 import android.view.WindowManager
 import android.os.Build
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.ui.platform.LocalView
 import androidx.compose.foundation.layout.BoxWithConstraints
@@ -119,6 +120,8 @@ fun DynamicIslandOverlayContent(
     stopwatch: Stopwatch?,
     topInsetDp: Dp,
     cutoutWidthDp: Dp = 44.dp,
+    alignment: app.expressiveclock.data.IslandAlignment = app.expressiveclock.data.IslandAlignment.CENTRE,
+    expandedPosition: app.expressiveclock.data.IslandExpandedPosition = app.expressiveclock.data.IslandExpandedPosition.OVERLAP_CUTOUT,
     offsetXDp: Dp = 0.dp,
     offsetYDp: Dp = 0.dp,
     widthOffsetDp: Dp = 0.dp,
@@ -193,7 +196,8 @@ fun DynamicIslandOverlayContent(
     }
 
     val configuration = LocalConfiguration.current
-    val screenWidthDp = configuration.screenWidthDp.dp
+    val display by IslandDisplayMonitor.state.collectAsState()
+    val screenWidthDp = (display.width / display.density).coerceAtLeast(1f).dp
     val view = LocalView.current
     var platformInsets by remember { mutableStateOf(view.rootWindowInsets) }
     DisposableEffect(view, configuration) {
@@ -207,22 +211,25 @@ fun DynamicIslandOverlayContent(
     val insets = platformInsets ?: if (Build.VERSION.SDK_INT >= 30) metrics?.windowInsets else null
     val displayHeight = if (Build.VERSION.SDK_INT >= 30) metrics?.bounds?.height() ?: view.resources.displayMetrics.heightPixels else view.resources.displayMetrics.heightPixels
     val cutout = if (Build.VERSION.SDK_INT >= 28) insets?.displayCutout?.boundingRects
-        ?.filter { it.top < displayHeight / 2 }
+        ?.filter { it.top == 0 && it.width() > 0 && it.height() < displayHeight / 2 }
         ?.minByOrNull { it.top }?.let {
             IslandCutout(it.left / displayDensity, it.top / displayDensity, it.right / displayDensity, it.bottom / displayDensity)
         } else null
     val reportedStatusBar = if (Build.VERSION.SDK_INT >= 30) insets?.getInsetsIgnoringVisibility(WindowInsets.Type.statusBars())?.top
         ?.div(displayDensity) ?: 32f else topInsetDp.value.coerceAtLeast(32f)
-    val statusBar = islandStatusBarHeight(reportedStatusBar, cutout)
+    val statusBar = islandStatusBarHeight(reportedStatusBar, cutout).coerceAtLeast(if (cutout == null) 24f else 0f)
     val geometry = islandGeometry(screenWidthDp.value, statusBar, cutout,
-        offsetXDp.value, offsetYDp.value - app.expressiveclock.data.FACTORY_OVERLAY_OFFSET_Y, widthOffsetDp.value, heightOffsetDp.value)
-    val expandedWidth = (screenWidthDp - 24.dp).coerceAtLeast(1.dp)
-    val expandedClearance = (maxOf(statusBar, cutout?.bottom ?: 0f) - geometry.top - 16f).coerceAtLeast(0f)
+        offsetXDp.value, offsetYDp.value - app.expressiveclock.data.FACTORY_OVERLAY_OFFSET_Y, widthOffsetDp.value, heightOffsetDp.value, screenHeight = display.height / display.density, alignment = alignment)
+    val expandedWidth = islandExpandedWidth(screenWidthDp.value, display.height / display.density).dp
+    val expandedBaseHeight = 168f + (LocalDensity.current.fontScale - 1f).coerceAtLeast(0f) * 24f
+    val expandedAnchor = if (expandedPosition == app.expressiveclock.data.IslandExpandedPosition.BELOW_STATUS_BAR)
+        maxOf(geometry.top, statusBar + 6f) else geometry.top
+    val expandedTop = islandExpandedTop(expandedAnchor, display.height / display.density, expandedBaseHeight).dp
+    val expandedClearance = (maxOf(statusBar, cutout?.bottom ?: 0f) - expandedTop.value - 16f).coerceAtLeast(0f)
     LaunchedEffect(expandedClearance) { onExpandedClearanceChanged(expandedClearance) }
-    val expandedHeight = (expandedClearance + 168f + (LocalDensity.current.fontScale - 1f).coerceAtLeast(0f) * 24f).dp
+    val expandedHeight = (expandedClearance + expandedBaseHeight).dp
     val collapsedWidth = geometry.width.dp
     val collapsedHeight = geometry.height.dp
-    val expandedTop = geometry.top.dp
     val islandTop by transition.animateDp(label = "islandTop", transitionSpec = { spring(stiffness = 520f, dampingRatio = .72f) }) {
         if (it == IslandState.EXPANDED) expandedTop else geometry.top.dp
     }
@@ -437,8 +444,9 @@ fun DynamicIslandOverlayContent(
         // Layer B: Content Box positioned over the drawn black island surface
         Box(
             modifier = Modifier
-                .padding(top = islandTop)
-                .offset { androidx.compose.ui.unit.IntOffset(islandOffsetX.roundToPx(), 0) }
+                // Position is translation, not padding: a spring's brief negative excursion
+                // during a display/profile transition must not create illegal padding.
+                .offset { androidx.compose.ui.unit.IntOffset(islandOffsetX.roundToPx(), islandTop.roundToPx()) }
                 .width(effectiveWidth)
                 .height(effectiveHeight)
                 .clipToBounds()
@@ -563,13 +571,14 @@ private fun CompactTickerText(
     countDown: Boolean = true,
 ) {
     val roll = mechanicalRollEnabled(valueString)
+    val down = mechanicalCountDown(valueString, countDown)
     Row(modifier, verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.End) {
         valueString.forEachIndexed { index, char ->
             val cell: @Composable (Char) -> Unit = { digit ->
                 Text(digit.toString(), style = MaterialTheme.typography.labelLarge.copy(
                     fontWeight = FontWeight.Bold, fontSize = 13.sp, fontFamily = fontFamily), color = Color.White)
             }
-            if (char.isDigit()) MechanicalDigit(char, index, valueString.length, countDown, roll, content = cell)
+            if (char.isDigit()) MechanicalDigit(char, index, valueString.length, down, roll, content = cell)
             else cell(char)
         }
     }
@@ -851,13 +860,14 @@ private fun TickerTimerReadout(
     countDown: Boolean = true,
 ) {
     val roll = mechanicalRollEnabled(text)
+    val down = mechanicalCountDown(text, countDown)
     Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(1.5.dp)) {
         text.forEachIndexed { index, char ->
             val cell: @Composable (Char) -> Unit = { digit ->
                 Numerals(text = digit.toString(), capHeight = capHeight, color = color,
                     width = ClockFace.CONDENSED, weight = 500, tracking = ClockFace.CONDENSED_TRACKING)
             }
-            if (char.isDigit()) MechanicalDigit(char, index, text.length, countDown, roll, content = cell)
+            if (char.isDigit()) MechanicalDigit(char, index, text.length, down, roll, content = cell)
             else cell(char)
         }
     }
@@ -878,4 +888,31 @@ private fun formatFullDuration(duration: Duration): String {
     val mins = (totalSecs % 3600) / 60
     val secs = totalSecs % 60
     return "%02d:%02d:%02d".format(hrs, mins, secs)
+}
+
+
+@Composable
+internal fun calibrationVerticalRange(heightAdjustment: Float): ClosedFloatingPointRange<Float> {
+    val display by IslandDisplayMonitor.state.collectAsState()
+    val view = LocalView.current
+    val context = LocalContext.current
+    val density = LocalDensity.current.density
+    val configuration = LocalConfiguration.current
+    var platformInsets by remember { mutableStateOf(view.rootWindowInsets) }
+    DisposableEffect(view, configuration) {
+        platformInsets = view.rootWindowInsets
+        view.setOnApplyWindowInsetsListener { _, insets -> platformInsets = insets; insets }
+        view.requestApplyInsets()
+        onDispose { view.setOnApplyWindowInsetsListener(null) }
+    }
+    val metrics = if (Build.VERSION.SDK_INT >= 30) context.getSystemService(WindowManager::class.java).currentWindowMetrics else null
+    val insets = platformInsets ?: if (Build.VERSION.SDK_INT >= 30) metrics?.windowInsets else null
+    val cutout = if (Build.VERSION.SDK_INT >= 28) insets?.displayCutout?.boundingRects
+        ?.firstOrNull { it.top == 0 && it.width() > 0 && it.height() < display.height / 2 }
+        ?.let { IslandCutout(it.left / density, it.top / density, it.right / density, it.bottom / density) } else null
+    val reported = if (Build.VERSION.SDK_INT >= 30)
+        insets?.getInsetsIgnoringVisibility(WindowInsets.Type.statusBars())?.top?.div(density) ?: 32f else 32f
+    val statusBar = islandStatusBarHeight(reported, cutout).coerceAtLeast(if (cutout == null) 24f else 0f)
+    return islandVerticalRange(display.width / display.density, display.height / display.density,
+        statusBar, cutout, heightAdjustment)
 }

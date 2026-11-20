@@ -14,43 +14,39 @@ android {
         applicationId = "app.expressiveclock"
         minSdk = 26
         targetSdk = 36
-        versionCode = 10
-        versionName = "0.1.7"
+        versionCode = 11
+        versionName = "0.1.8"
     }
 
-    /**
-     * Release signing configuration, loading credentials from root-level `keystore.properties` or Gradle properties.
-     * Strict enforcement: fails release builds cleanly if properties or keystore file are missing.
-     */
-    val keystorePropsFile = rootProject.file("keystore.properties")
+    // Configure lazily enough for debug/tests/lint to work in contributor checkouts.
+    // Packaging a production release is guarded explicitly; there is never a debug-key fallback.
     val keystoreProps = Properties()
-    if (keystorePropsFile.exists()) {
-        keystorePropsFile.inputStream().use { stream ->
-            keystoreProps.load(stream)
-        }
-    }
-
+    val keystorePropsFile = rootProject.file("keystore.properties")
+    if (keystorePropsFile.isFile) keystorePropsFile.inputStream().use(keystoreProps::load)
+    fun signingValue(name: String) = keystoreProps.getProperty(name) ?: providers.gradleProperty(name).orNull
+    val releaseStore = signingValue("clockStoreFile")?.takeIf { it.isNotBlank() }?.let(rootProject::file)
+    val releaseStorePassword = signingValue("clockStorePassword")
+    val releaseAlias = signingValue("clockKeyAlias")
+    val releaseKeyPassword = signingValue("clockKeyPassword")
+    val productionSigningReady = releaseStore?.isFile == true &&
+        listOf(releaseStorePassword, releaseAlias, releaseKeyPassword).all { !it.isNullOrBlank() }
     signingConfigs {
         create("release") {
-            val storePath = keystoreProps.getProperty("clockStoreFile")
-                ?: (findProperty("clockStoreFile") as String?)
-                ?: error("Missing 'clockStoreFile' in keystore.properties or ~/.gradle/gradle.properties")
-            val storeFileObj = rootProject.file(storePath)
-            if (!storeFileObj.exists()) {
-                error("Keystore file '$storePath' defined by 'clockStoreFile' does not exist.")
-            }
-            storeFile = storeFileObj
-            storePassword = keystoreProps.getProperty("clockStorePassword")
-                ?: (findProperty("clockStorePassword") as String?)
-                ?: error("Missing 'clockStorePassword' in keystore.properties or ~/.gradle/gradle.properties")
-            keyAlias = keystoreProps.getProperty("clockKeyAlias")
-                ?: (findProperty("clockKeyAlias") as String?)
-                ?: error("Missing 'clockKeyAlias' in keystore.properties or ~/.gradle/gradle.properties")
-            keyPassword = keystoreProps.getProperty("clockKeyPassword")
-                ?: (findProperty("clockKeyPassword") as String?)
-                ?: error("Missing 'clockKeyPassword' in keystore.properties or ~/.gradle/gradle.properties")
+            storeFile = releaseStore
+            storePassword = releaseStorePassword
+            keyAlias = releaseAlias
+            keyPassword = releaseKeyPassword
         }
     }
+    val verifyProductionSigning = tasks.register("verifyProductionSigning") {
+        doLast {
+            check(productionSigningReady) {
+                "Production release signing requires clockStoreFile, clockStorePassword, clockKeyAlias and clockKeyPassword. No debug signing fallback is permitted."
+            }
+        }
+    }
+    tasks.matching { it.name in setOf("validateSigningRelease", "packageRelease", "signReleaseBundle", "packageReleaseBundle") }
+        .configureEach { dependsOn(verifyProductionSigning) }
 
     buildTypes {
         release {

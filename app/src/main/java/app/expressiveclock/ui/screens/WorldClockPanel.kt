@@ -7,6 +7,8 @@ import androidx.compose.ui.semantics.CustomAccessibilityAction
 import androidx.compose.ui.input.nestedscroll.nestedScroll
 import android.graphics.RenderEffect
 import android.graphics.Shader
+import androidx.compose.ui.graphics.drawscope.translate
+import androidx.compose.ui.unit.IntSize
 import android.os.Build
 import androidx.compose.foundation.border
 import app.expressiveclock.ui.WorldClockCardTime
@@ -635,9 +637,10 @@ private fun CityGridCard(
 }
 
 @Composable
-internal fun Modifier.progressiveListEdgeMask(topStrength: Float, bottomStrength: Float = 1f): Modifier {
+internal fun Modifier.progressiveListEdgeMask(topStrength: Float, bottomStrength: Float = 1f, edgeBandsOnly: Boolean = false): Modifier {
     val sharp = rememberGraphicsLayer()
     val blurred = rememberGraphicsLayer()
+    val bottomBlurred = rememberGraphicsLayer()
     return graphicsLayer {
     compositingStrategy = CompositingStrategy.Offscreen
 }.drawWithContent {
@@ -653,6 +656,28 @@ internal fun Modifier.progressiveListEdgeMask(topStrength: Float, bottomStrength
         (1f - edgeFraction) to Color.Black, 1f to Color.Black.copy(alpha = 1f - bottomStrength),
     )
     if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+        if (edgeBandsOnly) {
+            val band = (32.dp.toPx() + 10.dp.toPx()).coerceAtMost(size.height / 2f)
+            val bandSize = IntSize(size.width.toInt().coerceAtLeast(1), band.toInt().coerceAtLeast(1))
+            val effect = RenderEffect.createBlurEffect(5.dp.toPx(), 5.dp.toPx(), Shader.TileMode.CLAMP).asComposeRenderEffect()
+            blurred.record(size = bandSize) { drawLayer(sharp) }
+            bottomBlurred.record(size = bandSize) {
+                translate(top = -(this@drawWithContent.size.height - band)) { drawLayer(sharp) }
+            }
+            blurred.renderEffect = effect
+            bottomBlurred.renderEffect = effect
+            val canvas = drawContext.canvas
+            val bounds = Rect(Offset.Zero, size)
+            canvas.saveLayer(bounds, Paint())
+            drawLayer(sharp)
+            drawRect(clearMask, blendMode = BlendMode.DstIn)
+            canvas.restore()
+            canvas.saveLayer(bounds, Paint())
+            drawLayer(blurred)
+            translate(top = size.height - band) { drawLayer(bottomBlurred) }
+            drawRect(clearMask, blendMode = BlendMode.DstOut)
+            canvas.restore()
+        } else {
         blurred.record { drawLayer(sharp) }
         blurred.renderEffect = RenderEffect.createBlurEffect(
             5.dp.toPx(), 5.dp.toPx(), Shader.TileMode.CLAMP,
@@ -667,6 +692,7 @@ internal fun Modifier.progressiveListEdgeMask(topStrength: Float, bottomStrength
         drawLayer(blurred)
         drawRect(clearMask, blendMode = BlendMode.DstOut)
         canvas.restore()
+        }
     } else {
         drawLayer(sharp)
     }

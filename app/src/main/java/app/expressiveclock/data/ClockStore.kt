@@ -5,6 +5,7 @@ import androidx.datastore.core.DataStore
 import androidx.datastore.preferences.core.Preferences
 import androidx.datastore.preferences.core.booleanPreferencesKey
 import androidx.datastore.preferences.core.edit
+import androidx.datastore.preferences.core.floatPreferencesKey
 import androidx.datastore.preferences.core.intPreferencesKey
 import androidx.datastore.preferences.core.longPreferencesKey
 import androidx.datastore.preferences.core.stringPreferencesKey
@@ -206,7 +207,7 @@ class ClockStore(private val context: Context) {
 
 /* ── Settings ⇄ preferences ─────────────────────────────────────────────────────────────────── */
 
-private fun Preferences.toSettings() = ClockSettings(
+internal fun Preferences.toSettings() = ClockSettings(
     alarms = AlarmSettings(
         silenceAfterMinutes = this[intPreferencesKey("silenceAfter")] ?: 10,
         snoozeMinutes = this[intPreferencesKey("snooze")] ?: 10,
@@ -233,6 +234,18 @@ private fun Preferences.toSettings() = ClockSettings(
         darkMode = enumOr(this[stringPreferencesKey("darkMode")], DarkMode.SYSTEM),
         amoledBlack = this[booleanPreferencesKey("amoled")] ?: false,
         dynamicIsland = this[booleanPreferencesKey("dynamicIsland")] ?: false,
+        overlayProfiles = IslandProfile.entries.associateWith { profile ->
+            fun value(field: String, legacy: String, fallback: Int) =
+                this[floatPreferencesKey("island_${profile.name}_${field}_dp")]
+                    ?: (this[intPreferencesKey("island_${profile.name}_$field")] ?: this[intPreferencesKey(legacy)] ?: fallback).toFloat()
+            IslandCalibration(value("x", "overlayOffsetX", FACTORY_OVERLAY_OFFSET_X),
+                value("y", "overlayOffsetY", FACTORY_OVERLAY_OFFSET_Y),
+                value("width", "overlayWidthOffset", FACTORY_OVERLAY_WIDTH_OFFSET),
+                value("height", "overlayHeightOffset", FACTORY_OVERLAY_HEIGHT_OFFSET),
+                enabled = this[booleanPreferencesKey("island_${profile.name}_enabled")] ?: true,
+                alignment = enumOr(this[stringPreferencesKey("island_${profile.name}_alignment")], IslandAlignment.CENTRE),
+                expandedPosition = enumOr(this[stringPreferencesKey("island_${profile.name}_expanded")], IslandExpandedPosition.OVERLAP_CUTOUT))
+        },
         overlayOffsetX = this[intPreferencesKey("overlayOffsetX")] ?: FACTORY_OVERLAY_OFFSET_X,
         overlayOffsetY = this[intPreferencesKey("overlayOffsetY")] ?: FACTORY_OVERLAY_OFFSET_Y,
         overlayWidthOffset = this[intPreferencesKey("overlayWidthOffset")] ?: FACTORY_OVERLAY_WIDTH_OFFSET,
@@ -242,7 +255,7 @@ private fun Preferences.toSettings() = ClockSettings(
     hasCompletedInitialSetup = this[booleanPreferencesKey("hasCompletedInitialSetup")] ?: false,
 )
 
-private fun androidx.datastore.preferences.core.MutablePreferences.writeSettings(s: ClockSettings) {
+internal fun androidx.datastore.preferences.core.MutablePreferences.writeSettings(s: ClockSettings) {
     this[booleanPreferencesKey("alarmCards24Hour")] = s.alarms.cards24Hour
     this[intPreferencesKey("silenceAfter")] = s.alarms.silenceAfterMinutes
     this[intPreferencesKey("snooze")] = s.alarms.snoozeMinutes
@@ -266,6 +279,16 @@ private fun androidx.datastore.preferences.core.MutablePreferences.writeSettings
     this[intPreferencesKey("overlayOffsetY")] = s.theme.overlayOffsetY
     this[intPreferencesKey("overlayWidthOffset")] = s.theme.overlayWidthOffset
     this[intPreferencesKey("overlayHeightOffset")] = s.theme.overlayHeightOffset
+    IslandProfile.entries.forEach { profile ->
+        val value = s.theme.calibration(profile)
+        this[floatPreferencesKey("island_${profile.name}_x_dp")] = value.x
+        this[floatPreferencesKey("island_${profile.name}_y_dp")] = value.y
+        this[floatPreferencesKey("island_${profile.name}_width_dp")] = value.width
+        this[floatPreferencesKey("island_${profile.name}_height_dp")] = value.height
+        this[booleanPreferencesKey("island_${profile.name}_enabled")] = value.enabled
+        this[stringPreferencesKey("island_${profile.name}_alignment")] = value.alignment.name
+        this[stringPreferencesKey("island_${profile.name}_expanded")] = value.expandedPosition.name
+    }
     this[stringPreferencesKey("defaultStartupPage")] = s.defaultStartupPage.name
     this[booleanPreferencesKey("hasCompletedInitialSetup")] = s.hasCompletedInitialSetup
 }

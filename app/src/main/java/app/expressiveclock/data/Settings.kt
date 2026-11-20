@@ -69,6 +69,7 @@ data class ThemeSettings(
     val darkMode: DarkMode = DarkMode.SYSTEM,
     val amoledBlack: Boolean = false,
     val dynamicIsland: Boolean = false,
+    val overlayProfiles: Map<IslandProfile, IslandCalibration> = emptyMap(),
     val overlayOffsetX: Int = FACTORY_OVERLAY_OFFSET_X,
     val overlayOffsetY: Int = FACTORY_OVERLAY_OFFSET_Y,
     val overlayWidthOffset: Int = FACTORY_OVERLAY_WIDTH_OFFSET,

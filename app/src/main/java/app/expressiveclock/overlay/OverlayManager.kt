@@ -1,5 +1,8 @@
 package app.expressiveclock.overlay
 
+import app.expressiveclock.data.calibration
+import app.expressiveclock.data.legacyCalibration
+import androidx.compose.runtime.collectAsState
 import android.content.Context
 import androidx.compose.ui.graphics.graphicsLayer
 import android.content.Intent
@@ -84,6 +87,9 @@ object OverlayManager {
     private var appContext: Context? = null
 
     private var currentSettings: ClockSettings? = null
+    // DataStore emissions can lag behind a drag. Never replay those older values
+    // over the immediate calibration preview.
+    private var calibrationPreviewSettings: ClockSettings? = null
     private var currentTimer: ClockTimer? = null
     private var currentStopwatch: Stopwatch? = null
 
@@ -115,8 +121,10 @@ object OverlayManager {
         if (appContext != null) return
         val app = context.applicationContext
         appContext = app
+        IslandDisplayMonitor.start(app)
         windowManager = app.getSystemService<WindowManager>()
 
+        scope.launch { IslandDisplayMonitor.state.collect { syncOverlayState() } }
         val store = ClockStore(app)
         scope.launch {
             combine(store.settings, store.timer, store.stopwatch) { s, t, sw ->
@@ -148,23 +156,24 @@ object OverlayManager {
     }
 
     fun showCalibrationPreview(context: Context, settings: ClockSettings) {
-        currentSettings = settings
+        calibrationPreviewSettings = settings
         isCalibrationPreviewing = true
         syncOverlayState()
     }
 
     fun updateCalibrationPreview(settings: ClockSettings) {
-        currentSettings = settings
+        calibrationPreviewSettings = settings
         overlaySettingsState = settings
-        if (isOverlayAttached) {
-            updateWindowParams()
-        } else {
+        // The preview already occupies a full-screen window. Moving its Compose
+        // content does not require relaying out the Android overlay window.
+        if (!isOverlayAttached) {
             syncOverlayState()
         }
     }
 
     fun hideCalibrationPreview() {
         isCalibrationPreviewing = false
+        calibrationPreviewSettings = null
         overlayIsCalibrationState = false
         syncOverlayState()
     }
@@ -208,14 +217,10 @@ object OverlayManager {
     fun syncOverlayState() {
         val context = appContext ?: return
 
-        // Cold start guard: Wait until AppLifecycleTracker has observed first activity lifecycle state
-        if (!AppLifecycleTracker.hasObservedFirstActivityState && !isCalibrationPreviewing) {
-            Log.d("DynamicIslandOverlay", "syncOverlayState deferred: Waiting for first activity lifecycle state")
-            return
-        }
-
-        val settings = currentSettings ?: ClockSettings()
-        val isEnabledInSettings = settings.theme.dynamicIsland
+        // Stored state and the accessibility window are sufficient after a service restart;
+        // waiting for an Activity would leave a running background timer without an island.
+        val settings = (if (isCalibrationPreviewing) calibrationPreviewSettings else currentSettings) ?: return
+        val isEnabledInSettings = settings.theme.dynamicIsland && settings.theme.calibration(IslandDisplayMonitor.state.value.calibrationProfile).enabled
         val isAccConnected = OverlayAccessibilityService.instance != null
 
         overlaySettingsState = settings
@@ -348,7 +353,7 @@ object OverlayManager {
             } else {
                 Log.d("DynamicIslandOverlay", "Render overlay window added successfully (gen=$currentGen, wmHash=${System.identityHashCode(wm)})")
             }
-        } else {
+        } else if (!isCalibrationPreviewing) {
             updateWindowParams()
         }
 
@@ -429,16 +434,20 @@ object OverlayManager {
         val visualStopwatch = if (overlayIsExitingState) overlayExitStopwatchState else overlayStopwatchState
 
         ClockTheme {
+            val display by IslandDisplayMonitor.state.collectAsState()
+            val calibration = settings.theme.calibration(display.calibrationProfile)
             DynamicIslandOverlayContent(
                 timer = visualTimer,
                 stopwatch = visualStopwatch,
                 exitRequestId = overlayExitRequestId,
                 topInsetDp = 8.dp,
                 cutoutWidthDp = 48.dp,
-                offsetXDp = settings.theme.overlayOffsetX.dp,
-                offsetYDp = settings.theme.overlayOffsetY.dp,
-                widthOffsetDp = settings.theme.overlayWidthOffset.dp,
-                heightOffsetDp = settings.theme.overlayHeightOffset.dp,
+                alignment = calibration.alignment,
+                expandedPosition = calibration.expandedPosition,
+                offsetXDp = calibration.x.dp,
+                offsetYDp = calibration.y.dp,
+                widthOffsetDp = calibration.width.dp,
+                heightOffsetDp = calibration.height.dp,
                 isCalibrationPreview = overlayIsCalibrationState,
                 isExiting = overlayIsExitingState,
                 isExpanded = overlayIsExpandedState,

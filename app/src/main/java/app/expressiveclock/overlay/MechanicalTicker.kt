@@ -20,7 +20,7 @@ internal fun tickerCanRoll(old: String, new: String): Boolean {
         return fields.fold(0L) { value, field -> value * 60 + (field.toLongOrNull() ?: return null) }
     }
     return old.length == new.length && old.filter { !it.isDigit() } == new.filter { !it.isDigit() } &&
-        seconds(old)?.let { a -> seconds(new)?.let { b -> kotlin.math.abs(b - a) == 1L } } == true
+        seconds(old)?.let { a -> seconds(new)?.let { b -> (kotlin.math.abs(b - a) == 1L || b - a in 59L..60L) } } == true
 }
 internal fun tickerDelay(index: Int, length: Int, down: Boolean): Int =
     ((if (down) length - 1 - index else index).coerceAtLeast(0) * 38).coerceAtMost(190)
@@ -32,6 +32,17 @@ internal fun mechanicalRollEnabled(text: String): Boolean {
     SideEffect { previous = text }
     // Remember the decision for this update; recomposition during the animation must not disable it.
     return remember(text) { enabled }
+}
+
+/** Added time rolls upwards; normal countdown ticks retain their downward direction. */
+@Composable
+internal fun mechanicalCountDown(text: String, fallback: Boolean): Boolean {
+    var previous by remember { mutableStateOf(text) }
+    val old = previous.filter(Char::isDigit).toLongOrNull()
+    val next = text.filter(Char::isDigit).toLongOrNull()
+    val down = if (old != null && next != null && old != next) next < old else fallback
+    SideEffect { previous = text }
+    return remember(text) { down }
 }
 
 /** Adapted from Expressive Clock TimersScreen.TickerCell: full-cell slide, 380/.68 detent,

@@ -1,0 +1,8 @@
+What's new:
+• Improved floating Timer and Stopwatch positioning in landscape.
+• Added separate foldable calibration profiles and smoother, precise controls.
+• Added live previews, manual Save and unsaved-change warnings.
+• Added display-mode guidance and calibration page rotation.
+• Improved minute-addition ticking and calibration navigation.
+
+Enjoy!

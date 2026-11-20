@@ -9,7 +9,9 @@ class MechanicalTickerTest {
         assertTrue(tickerCanRoll("00:00:09", "00:00:10"))
     }
     @Test fun resyncAndFormatChangeSnap() {
-        assertFalse(tickerCanRoll("00:01:00", "00:02:00"))
+        assertTrue(tickerCanRoll("00:01:00", "00:02:00"))
+        assertTrue(tickerCanRoll("00:59:30", "01:00:30"))
+        assertFalse(tickerCanRoll("00:02:00", "00:01:00"))
         assertFalse(tickerCanRoll("59s", "01m"))
     }
     @Test fun cascadeDirectionAndDelayAreBounded() {

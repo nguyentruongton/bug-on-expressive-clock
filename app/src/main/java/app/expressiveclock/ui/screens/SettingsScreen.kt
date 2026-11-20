@@ -1,5 +1,30 @@
 package app.expressiveclock.ui.screens
 
+import app.expressiveclock.data.IslandProfile
+import app.expressiveclock.data.IslandCalibration
+import app.expressiveclock.data.calibration
+import app.expressiveclock.data.legacyCalibration
+import app.expressiveclock.data.withCalibration
+import app.expressiveclock.overlay.IslandDisplayMonitor
+import androidx.compose.runtime.collectAsState
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
+import androidx.compose.foundation.layout.offset
+import androidx.compose.foundation.layout.safeDrawing
+import androidx.compose.foundation.layout.windowInsetsPadding
+import androidx.compose.material.icons.outlined.Smartphone
+import androidx.compose.material.icons.outlined.TabletAndroid
+import androidx.compose.material.icons.outlined.ChevronRight
+import androidx.compose.ui.graphics.luminance
+import androidx.compose.ui.platform.LocalView
+import androidx.activity.compose.PredictiveBackHandler
+import androidx.compose.animation.core.Animatable
+import androidx.compose.runtime.rememberCoroutineScope
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.NonCancellable
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
+import androidx.compose.foundation.selection.selectableGroup
 import android.app.Activity
 import android.content.Intent
 import android.graphics.Paint
@@ -52,6 +77,7 @@ import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.navigationBars
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
@@ -135,6 +161,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.draw.drawWithContent
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
@@ -813,11 +840,12 @@ private fun Modifier.expandedSettingsTile(): Modifier = if (LocalSettingsCategor
 @Composable
 private fun CalibrationControlRow(
     label: String,
-    valueDp: Int,
+    valueDp: Float,
     minValue: Float,
     maxValue: Float,
     leftIcon: ImageVector,
     rightIcon: ImageVector,
+    centreDefault: Boolean = false,
     onValueChange: (Float) -> Unit,
 ) {
     Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
@@ -827,7 +855,7 @@ private fun CalibrationControlRow(
             verticalAlignment = Alignment.CenterVertically,
         ) {
             Text(label, style = MaterialTheme.typography.labelMedium)
-            Text("$valueDp dp", style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.Bold))
+            Text(if (centreDefault && kotlin.math.abs(valueDp) < .05f) "Default" else "${java.text.DecimalFormat("0.#").format(valueDp)} dp", style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.Bold))
         }
 
         Row(
@@ -854,9 +882,10 @@ private fun CalibrationControlRow(
             }
 
             Slider(
-                value = valueDp.toFloat(),
-                onValueChange = { onValueChange(it) },
-                valueRange = minValue..maxValue,
+                value = if (centreDefault) app.expressiveclock.overlay.verticalSliderPosition(valueDp, minValue, maxValue) else valueDp,
+                onValueChange = { onValueChange(if (centreDefault)
+                    app.expressiveclock.overlay.verticalSliderOffset(it, minValue, maxValue) else it) },
+                valueRange = if (centreDefault) -1f..1f else minValue..maxValue,
                 modifier = Modifier.weight(1f),
             )
 
@@ -888,142 +917,346 @@ private fun OverlayCalibrationDialog(
     onChange: ((ClockSettings) -> ClockSettings) -> Unit,
 ) {
     val context = LocalContext.current
-    var offsetX by remember { mutableFloatStateOf(settings.theme.overlayOffsetX.toFloat()) }
-    var offsetY by remember { mutableFloatStateOf(settings.theme.overlayOffsetY.toFloat()) }
-    var widthOffset by remember { mutableFloatStateOf(settings.theme.overlayWidthOffset.toFloat()) }
-    var heightOffset by remember { mutableFloatStateOf(settings.theme.overlayHeightOffset.toFloat()) }
-
-    LaunchedEffect(Unit) {
-        OverlayManager.showCalibrationPreview(context, settings)
-    }
-
-    DisposableEffect(Unit) {
+    // Only the calibration flow may rotate on a portrait-locked slab. Both its
+    // overview and editor share this lifetime; leaving restores the prior policy.
+    DisposableEffect(context) {
+        var host: android.content.Context? = context
+        while (host is android.content.ContextWrapper && host !is Activity) host = host.baseContext
+        val activity = host as? Activity
+        val previous = activity?.requestedOrientation
+        val temporarilyUnlock = previous == android.content.pm.ActivityInfo.SCREEN_ORIENTATION_PORTRAIT
+        if (temporarilyUnlock) activity?.requestedOrientation = android.content.pm.ActivityInfo.SCREEN_ORIENTATION_FULL_SENSOR
         onDispose {
-            OverlayManager.hideCalibrationPreview()
+            if (temporarilyUnlock && previous != null) activity?.requestedOrientation = previous
         }
     }
-
-    val updateSettingsAndPreview = { newX: Int, newY: Int, newW: Int, newH: Int ->
-        val updated = settings.copy(
-            theme = settings.theme.copy(
-                overlayOffsetX = newX,
-                overlayOffsetY = newY,
-                overlayWidthOffset = newW,
-                overlayHeightOffset = newH,
-            )
-        )
-        onChange { updated }
-        OverlayManager.updateCalibrationPreview(updated)
+    val display by IslandDisplayMonitor.state.collectAsState()
+    var selected by remember { mutableStateOf<IslandProfile?>(null) }
+    var editingCalibration by remember(selected) { mutableStateOf(selected?.let { settings.theme.calibration(it) }) }
+    val baseline = remember(selected) { selected?.let { settings.theme.calibration(it) } }
+    var showUnsaved by remember { mutableStateOf(false) }
+    var pendingProfile by remember { mutableStateOf<IslandProfile?>(null) }
+    val scope = rememberCoroutineScope()
+    val pageProgress = remember { Animatable(0f) }
+    val editorProgress = remember { Animatable(0f) }
+    var navigatingBack by remember { mutableStateOf(false) }
+    var gestureActive by remember { mutableStateOf(false) }
+    var backDirection by remember { mutableFloatStateOf(1f) }
+    suspend fun finishBack(force: Boolean = false) {
+        if (!force && selected != null && editingCalibration != baseline) {
+            editorProgress.animateTo(1f, spring(stiffness = 380f, dampingRatio = .86f))
+            showUnsaved = true
+            return
+        }
+        navigatingBack = true
+        if (selected != null) {
+            editorProgress.animateTo(0f, tween(260, easing = FastOutSlowInEasing))
+            selected = null
+        } else {
+            pageProgress.animateTo(0f, tween(260, easing = FastOutSlowInEasing))
+            onDismiss()
+        }
+        navigatingBack = false
     }
-
-    val relX = (offsetX - FACTORY_OVERLAY_OFFSET_X).roundToInt()
-    val relY = (offsetY - FACTORY_OVERLAY_OFFSET_Y).roundToInt()
-    val relW = (widthOffset - FACTORY_OVERLAY_WIDTH_OFFSET).roundToInt()
-    val relH = (heightOffset - FACTORY_OVERLAY_HEIGHT_OFFSET).roundToInt()
-
-    AlertDialog(
-        properties = DialogProperties(usePlatformDefaultWidth = !compactSettingsDialog()),
-        modifier = if (compactSettingsDialog()) Modifier.padding(horizontal = 24.dp).widthIn(max = 560.dp).fillMaxWidth() else Modifier,
-        onDismissRequest = onDismiss,
-        title = { Text("Overlay position & size calibration") },
-        confirmButton = {
-            TextButton(
-                onClick = {
-                    updateSettingsAndPreview(
-                        offsetX.roundToInt(),
-                        offsetY.roundToInt(),
-                        widthOffset.roundToInt(),
-                        heightOffset.roundToInt(),
-                    )
-                    onDismiss()
+    fun goBack() {
+        if (!navigatingBack && !gestureActive) { backDirection = 1f; scope.launch { finishBack() } }
+    }
+    fun openProfile(profile: IslandProfile) {
+        if (selected == null && !navigatingBack && !gestureActive) {
+            backDirection = 1f
+            if (profile == display.calibrationProfile) selected = profile else pendingProfile = profile
+        }
+    }
+    LaunchedEffect(pendingProfile, display.calibrationProfile) {
+        pendingProfile?.takeIf { it == display.calibrationProfile }?.let {
+            pendingProfile = null
+            selected = it
+        }
+    }
+    val profiles = if (display.foldable) IslandProfile.entries else IslandProfile.entries.take(2)
+    fun label(profile: IslandProfile): String = if (display.foldable) profile.label else
+        if (profile == IslandProfile.FOLDED_PORTRAIT) "Portrait" else "Landscape"
+    LaunchedEffect(selected) {
+        if (selected == null) {
+            editorProgress.snapTo(0f)
+        } else {
+            editorProgress.snapTo(0f)
+            editorProgress.animateTo(1f, tween(360, easing = FastOutSlowInEasing))
+        }
+    }
+    androidx.compose.ui.window.Dialog(
+        onDismissRequest = { goBack() },
+        properties = DialogProperties(usePlatformDefaultWidth = false, decorFitsSystemWindows = false,
+            dismissOnBackPress = false, dismissOnClickOutside = false),
+    ) {
+        LaunchedEffect(Unit) { pageProgress.animateTo(1f, tween(360, easing = FastOutSlowInEasing)) }
+        PredictiveBackHandler(enabled = !navigatingBack && !showUnsaved && pendingProfile == null) { events ->
+            val progress = if (selected != null) editorProgress else pageProgress
+            gestureActive = true
+            try {
+                events.collect { event ->
+                    backDirection = if (event.swipeEdge == androidx.activity.BackEventCompat.EDGE_RIGHT) -1f else 1f
+                    progress.snapTo(1f - event.progress.coerceIn(0f, 1f))
+                }
+                finishBack()
+            } catch (_: CancellationException) {
+                withContext(NonCancellable) {
+                    progress.animateTo(1f, spring(stiffness = 380f, dampingRatio = .86f))
+                }
+            } finally { gestureActive = false }
+        }
+        pendingProfile?.let { requested ->
+            CalibrationProfileGuidance(
+                profile = requested, currentProfile = display.calibrationProfile, foldable = display.foldable,
+                onBack = { pendingProfile = null },
+                onContinue = { pendingProfile = null; selected = requested },
+            )
+        }
+        if (showUnsaved) {
+            androidx.compose.material3.AlertDialog(
+                onDismissRequest = { showUnsaved = false },
+                title = { Text("Unsaved changes") },
+                text = { Text("Save your calibration changes before leaving?") },
+                confirmButton = {
+                    TextButton(onClick = {
+                        val profile = selected
+                        val draft = editingCalibration
+                        if (profile != null && draft != null)
+                            onChange { current -> current.copy(theme = current.theme.withCalibration(profile, draft)) }
+                        showUnsaved = false
+                        scope.launch { finishBack(force = true) }
+                    }) { Text("Save") }
                 },
-            ) {
-                Text("Save")
-            }
-        },
-        dismissButton = {
-            TextButton(
-                onClick = {
-                    offsetX = FACTORY_OVERLAY_OFFSET_X.toFloat()
-                    offsetY = FACTORY_OVERLAY_OFFSET_Y.toFloat()
-                    widthOffset = FACTORY_OVERLAY_WIDTH_OFFSET.toFloat()
-                    heightOffset = FACTORY_OVERLAY_HEIGHT_OFFSET.toFloat()
-                    updateSettingsAndPreview(
-                        FACTORY_OVERLAY_OFFSET_X,
-                        FACTORY_OVERLAY_OFFSET_Y,
-                        FACTORY_OVERLAY_WIDTH_OFFSET,
-                        FACTORY_OVERLAY_HEIGHT_OFFSET,
-                    )
+                dismissButton = {
+                    Row {
+                        TextButton(onClick = { showUnsaved = false }) { Text("Keep editing") }
+                        TextButton(onClick = {
+                            showUnsaved = false
+                            scope.launch { finishBack(force = true) }
+                        }) { Text("Discard") }
+                    }
                 },
-            ) {
-                Text("Reset")
+            )
+        }
+        val dialogView = LocalView.current
+        val lightBars = MaterialTheme.colorScheme.background.luminance() > .5f
+        DisposableEffect(dialogView, lightBars) {
+            val window = (dialogView.parent as? androidx.compose.ui.window.DialogWindowProvider)?.window
+            window?.setDimAmount(0f)
+            window?.setWindowAnimations(0)
+            val controller = window?.let { androidx.core.view.WindowInsetsControllerCompat(it, dialogView) }
+            val oldStatus = controller?.isAppearanceLightStatusBars
+            val oldNavigation = controller?.isAppearanceLightNavigationBars
+            controller?.isAppearanceLightStatusBars = lightBars
+            controller?.isAppearanceLightNavigationBars = lightBars
+            onDispose {
+                if (oldStatus != null) controller?.isAppearanceLightStatusBars = oldStatus
+                if (oldNavigation != null) controller?.isAppearanceLightNavigationBars = oldNavigation
             }
-        },
-        text = {
-            Column(verticalArrangement = Arrangement.spacedBy(14.dp)) {
-                Text(
-                    "Fine-tune position and size if the capsule does not line up with your camera cutout.",
-                    style = MaterialTheme.typography.bodyMedium,
-                )
-
-                // 1. Horizontal offset (X Position)
-                CalibrationControlRow(
-                    label = "Horizontal offset",
-                    valueDp = relX,
-                    minValue = -200f,
-                    maxValue = 200f,
-                    leftIcon = Icons.AutoMirrored.Rounded.ArrowBack,
-                    rightIcon = Icons.AutoMirrored.Rounded.ArrowForward,
-                    onValueChange = { rel ->
-                        offsetX = FACTORY_OVERLAY_OFFSET_X + rel
-                        updateSettingsAndPreview(offsetX.roundToInt(), offsetY.roundToInt(), widthOffset.roundToInt(), heightOffset.roundToInt())
-                    },
-                )
-
-                // 2. Vertical offset (Y Position)
-                CalibrationControlRow(
-                    label = "Vertical offset",
-                    valueDp = relY.coerceAtLeast(-10),
-                    minValue = -10f,
-                    maxValue = 150f,
-                    leftIcon = Icons.Rounded.ArrowUpward,
-                    rightIcon = Icons.Rounded.ArrowDownward,
-                    onValueChange = { rel ->
-                        offsetY = FACTORY_OVERLAY_OFFSET_Y + rel
-                        updateSettingsAndPreview(offsetX.roundToInt(), offsetY.roundToInt(), widthOffset.roundToInt(), heightOffset.roundToInt())
-                    },
-                )
-
-                // 3. Capsule width
-                CalibrationControlRow(
-                    label = "Capsule width",
-                    valueDp = relW,
-                    minValue = -60f,
-                    maxValue = 300f,
-                    leftIcon = Icons.Rounded.Compress,
-                    rightIcon = Icons.Rounded.Expand,
-                    onValueChange = { rel ->
-                        widthOffset = FACTORY_OVERLAY_WIDTH_OFFSET + rel
-                        updateSettingsAndPreview(offsetX.roundToInt(), offsetY.roundToInt(), widthOffset.roundToInt(), heightOffset.roundToInt())
-                    },
-                )
-
-                // 4. Capsule height
-                CalibrationControlRow(
-                    label = "Capsule height",
-                    valueDp = relH,
-                    minValue = -20f,
-                    maxValue = 20f,
-                    leftIcon = Icons.Rounded.Compress,
-                    rightIcon = Icons.Rounded.Expand,
-                    onValueChange = { rel ->
-                        heightOffset = FACTORY_OVERLAY_HEIGHT_OFFSET + rel
-                        updateSettingsAndPreview(offsetX.roundToInt(), offsetY.roundToInt(), widthOffset.roundToInt(), heightOffset.roundToInt())
-                    },
-                )
+        }
+        val renderPage: @Composable (IslandProfile?) -> Unit = { profile ->
+        androidx.compose.material3.Surface(Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
+            Column(Modifier.fillMaxSize().windowInsetsPadding(WindowInsets.safeDrawing)) {
+                Row(Modifier.fillMaxWidth().padding(24.dp), verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(16.dp)) {
+                    IconButton(onClick = { goBack() },
+                        modifier = Modifier.size(48.dp).background(MaterialTheme.colorScheme.primaryContainer, CircleShape)) {
+                        Icon(Icons.AutoMirrored.Rounded.ArrowBack, contentDescription = "Back")
+                    }
+                    Text(profile?.let { "${label(it)} Calibration" } ?: "Position Calibration",
+                        style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold,
+                        modifier = Modifier.weight(1f))
+                }
+                val calibrationScroll = rememberScrollState()
+                val edgeDistance = with(LocalDensity.current) { 32.dp.toPx() }
+                val topEdge by animateFloatAsState(
+                    (calibrationScroll.value / edgeDistance).coerceIn(0f, 1f), label = "calibrationTopFalloff")
+                val bottomEdge by animateFloatAsState(
+                    ((calibrationScroll.maxValue - calibrationScroll.value) / edgeDistance).coerceIn(0f, 1f),
+                    label = "calibrationBottomFalloff")
+                Column(Modifier.weight(1f)
+                    .progressiveListEdgeMask(topStrength = topEdge, bottomStrength = bottomEdge, edgeBandsOnly = true)
+                    .verticalScroll(calibrationScroll).padding(horizontal = 24.dp)
+                    .padding(bottom = 32.dp), verticalArrangement = Arrangement.spacedBy(20.dp)) {
+                    if (profile == null) {
+                        Text("Adjust the position and size of the Dynamic Island to match your device and preferences.",
+                            color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        Text("DISPLAY CONFIGURATIONS", style = MaterialTheme.typography.labelLarge,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        profiles.forEach { entry ->
+                            val active = entry == display.calibrationProfile
+                            val value = settings.theme.calibration(entry)
+                            androidx.compose.material3.Surface(onClick = { openProfile(entry) },
+                                shape = RoundedCornerShape(24.dp), color = MaterialTheme.colorScheme.surfaceContainerLow,
+                                border = if (active) androidx.compose.foundation.BorderStroke(2.dp, MaterialTheme.colorScheme.primary) else null) {
+                                Row(Modifier.fillMaxWidth().padding(18.dp), verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                                    Box(Modifier.size(48.dp).background(MaterialTheme.colorScheme.primaryContainer, CircleShape),
+                                        contentAlignment = Alignment.Center) {
+                                        Icon(if (entry.ordinal < 2) Icons.Outlined.Smartphone else Icons.Outlined.TabletAndroid,
+                                            contentDescription = null, tint = MaterialTheme.colorScheme.primary,
+                                            modifier = Modifier.graphicsLayer { rotationZ = if (entry.ordinal % 2 == 1) 90f else 0f })
+                                    }
+                                    Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                                        Text(label(entry), style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+                                        if (active) Text("Current", color = MaterialTheme.colorScheme.primary,
+                                            style = MaterialTheme.typography.labelMedium)
+                                        Text(if (entry.ordinal < 2) "Standard ${if (entry.ordinal == 0) "vertical" else "horizontal"} orientation"
+                                            else "Inner display ${if (entry.ordinal == 2) "vertical" else "horizontal"} orientation",
+                                            style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                    }
+                                    androidx.compose.material3.Switch(checked = value.enabled, onCheckedChange = { enabled ->
+                                        onChange { current -> current.copy(theme = current.theme.withCalibration(entry,
+                                            current.theme.calibration(entry).copy(enabled = enabled))) }
+                                    })
+                                    Icon(Icons.Outlined.ChevronRight, contentDescription = "Edit ${label(entry)}")
+                                }
+                            }
+                        }
+                    } else {
+                        val value = editingCalibration ?: settings.theme.calibration(profile)
+                        fun update(next: IslandCalibration) { editingCalibration = next }
+                        Text("Adjust position and dimensions for this display mode. Preview changes here, then tap Save to apply.",
+                            color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        Text("Active: ${label(display.calibrationProfile)}", style = MaterialTheme.typography.labelLarge)
+                        if (profile != display.calibrationProfile) Text("Switch to this display configuration to see its live preview.",
+                            style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        Text("Horizontal alignment", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+                        androidx.compose.foundation.layout.BoxWithConstraints(Modifier.fillMaxWidth()
+                            .clip(RoundedCornerShape(18.dp))
+                            .background(MaterialTheme.colorScheme.surfaceContainerHighest)
+                            .padding(4.dp)) {
+                            val segmentWidth = maxWidth / 3
+                            val indicatorX by androidx.compose.animation.core.animateDpAsState(
+                                targetValue = segmentWidth * value.alignment.ordinal,
+                                animationSpec = spring(stiffness = 380f, dampingRatio = .86f),
+                                label = "alignmentIndicator")
+                            Box(Modifier.offset { androidx.compose.ui.unit.IntOffset(indicatorX.roundToPx(), 0) }
+                                .width(segmentWidth).height(48.dp)
+                                .background(MaterialTheme.colorScheme.primary, RoundedCornerShape(14.dp)))
+                            Row(Modifier.fillMaxWidth().selectableGroup()) {
+                                app.expressiveclock.data.IslandAlignment.entries.forEach { alignment ->
+                                    val checked = value.alignment == alignment
+                                    val labelColor by androidx.compose.animation.animateColorAsState(
+                                        if (checked) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSurfaceVariant,
+                                        label = "alignmentLabel")
+                                    Box(Modifier.weight(1f).height(48.dp).clip(RoundedCornerShape(14.dp))
+                                        .selectable(selected = checked, role = androidx.compose.ui.semantics.Role.RadioButton,
+                                            onClick = { update(value.copy(alignment = alignment)) }),
+                                        contentAlignment = Alignment.Center) {
+                                        Text(alignment.name.lowercase().replaceFirstChar { it.uppercase() },
+                                            color = labelColor, fontWeight = if (checked) FontWeight.Bold else FontWeight.Normal)
+                                    }
+                                }
+                            }
+                        }
+                        CalibrationControlRow("Horizontal offset", value.x - FACTORY_OVERLAY_OFFSET_X, -200f, 200f,
+                            Icons.AutoMirrored.Rounded.ArrowBack, Icons.AutoMirrored.Rounded.ArrowForward) {
+                            update(value.copy(x = FACTORY_OVERLAY_OFFSET_X + it)) }
+                        val verticalRange = app.expressiveclock.overlay.calibrationVerticalRange(value.height)
+                        CalibrationControlRow("Vertical offset", (value.y - FACTORY_OVERLAY_OFFSET_Y).coerceIn(verticalRange), verticalRange.start, verticalRange.endInclusive,
+                            Icons.Rounded.ArrowUpward, Icons.Rounded.ArrowDownward, centreDefault = true) {
+                            update(value.copy(y = FACTORY_OVERLAY_OFFSET_Y + it)) }
+                        CalibrationControlRow("Capsule width", value.width - FACTORY_OVERLAY_WIDTH_OFFSET, -60f, 300f,
+                            Icons.Rounded.Compress, Icons.Rounded.Expand) {
+                            update(value.copy(width = FACTORY_OVERLAY_WIDTH_OFFSET + it)) }
+                        CalibrationControlRow("Capsule height", value.height - FACTORY_OVERLAY_HEIGHT_OFFSET, -20f, 20f,
+                            Icons.Rounded.Compress, Icons.Rounded.Expand) {
+                            update(value.copy(height = FACTORY_OVERLAY_HEIGHT_OFFSET + it)) }
+                        androidx.compose.material3.Surface(shape = RoundedCornerShape(24.dp), color = MaterialTheme.colorScheme.surfaceContainerLow) {
+                            Column(Modifier.padding(18.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                                Text("Expanded card position", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+                                Text("Choose whether expanded cards avoid or overlap the camera cutout. Saved separately for each profile.",
+                                    style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                app.expressiveclock.data.IslandExpandedPosition.entries.forEach { position ->
+                                    val selectedPosition = value.expandedPosition == position
+                                    val selectionColour = animateColorAsState(
+                                        targetValue = MaterialTheme.colorScheme.primaryContainer.copy(
+                                            alpha = if (selectedPosition) 1f else 0f),
+                                        animationSpec = tween(220, easing = FastOutSlowInEasing),
+                                        label = "expandedPositionSelection")
+                                    Row(Modifier.fillMaxWidth()
+                                        .clip(RoundedCornerShape(16.dp))
+                                        .graphicsLayer()
+                                        .drawBehind { drawRect(selectionColour.value) }
+                                        .selectable(selected = selectedPosition,
+                                            role = androidx.compose.ui.semantics.Role.RadioButton,
+                                            interactionSource = remember { androidx.compose.foundation.interaction.MutableInteractionSource() },
+                                            indication = null,
+                                            onClick = { update(value.copy(expandedPosition = position)) })
+                                        .padding(horizontal = 12.dp, vertical = 14.dp),
+                                        horizontalArrangement = Arrangement.spacedBy(12.dp),
+                                        verticalAlignment = Alignment.CenterVertically) {
+                                        androidx.compose.material3.RadioButton(selected = selectedPosition,
+                                            onClick = null)
+                                        Text(if (position == app.expressiveclock.data.IslandExpandedPosition.BELOW_STATUS_BAR)
+                                            "Below status bar" else "Overlap camera cutout")
+                                    }
+                                }
+                            }
+                        }
+                        Row(Modifier.fillMaxWidth().padding(top = 12.dp), horizontalArrangement = Arrangement.spacedBy(14.dp)) {
+                            androidx.compose.material3.FilledTonalButton(
+                                onClick = { update(IslandCalibration()) },
+                                modifier = Modifier.weight(1f).heightIn(min = 52.dp),
+                                shape = CircleShape,
+                                colors = androidx.compose.material3.ButtonDefaults.filledTonalButtonColors(
+                                    containerColor = MaterialTheme.colorScheme.primaryContainer,
+                                    contentColor = MaterialTheme.colorScheme.primary),
+                            ) { Text("Reset", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold) }
+                            androidx.compose.material3.Button(
+                                onClick = {
+                                    onChange { current -> current.copy(theme = current.theme.withCalibration(profile, value)) }
+                                    scope.launch { finishBack(force = true) }
+                                },
+                                modifier = Modifier.weight(1f).heightIn(min = 52.dp),
+                                shape = CircleShape,
+                            ) { Text("Save", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold) }
+                        }
+                    }
+                }
             }
-        },
-    )
+        }
+        }
+        Box(Modifier.fillMaxSize()) {
+        Box(Modifier.fillMaxSize().graphicsLayer {
+            val p = pageProgress.value.coerceIn(0f, 1f)
+            translationX = size.width * (1f - p) * backDirection
+            scaleX = .97f + .03f * p; scaleY = scaleX
+            shape = RoundedCornerShape((24f * (1f - p)).dp)
+            clip = p < .999f
+            shadowElevation = (12f * (1f - p)).dp.toPx()
+        }) {
+            renderPage(null)
+            selected?.let { profile ->
+                Box(Modifier.fillMaxSize().graphicsLayer {
+                    val p = editorProgress.value.coerceIn(0f, 1f)
+                    translationX = size.width * (1f - p) * backDirection
+                    scaleX = .97f + .03f * p; scaleY = scaleX
+                    shape = RoundedCornerShape((24f * (1f - p)).dp)
+                    clip = p < .999f
+                    shadowElevation = (12f * (1f - p)).dp.toPx()
+                }) { renderPage(profile) }
+            }
+        }
+        if (selected != null) {
+            // Render above the editor in its own window. Calibration must not
+            // depend on an accessibility-service token surviving app updates.
+            val calibration = if (selected == display.calibrationProfile) editingCalibration
+                ?: settings.theme.calibration(display.calibrationProfile)
+                else settings.theme.calibration(display.calibrationProfile)
+            app.expressiveclock.overlay.DynamicIslandOverlayContent(
+                timer = null, stopwatch = null, topInsetDp = 8.dp,
+                cutoutWidthDp = 48.dp, isCalibrationPreview = true,
+                offsetXDp = calibration.x.dp, offsetYDp = calibration.y.dp,
+                widthOffsetDp = calibration.width.dp, heightOffsetDp = calibration.height.dp,
+                alignment = calibration.alignment, expandedPosition = calibration.expandedPosition,
+                onExpandChanged = {}, onPauseResumeTimer = {}, onAddTenTimer = {},
+                onCancelTimer = {}, onToggleStopwatch = {}, onLapStopwatch = {},
+            )
+        }
+        }
+    }
 }
 
 private enum class SettingsPicker { ALARM_CARD_FORMAT, THEME, SILENCE, SNOOZE, WEEK_START, PRIVACY, PRESETS, STARTUP_PAGE }
