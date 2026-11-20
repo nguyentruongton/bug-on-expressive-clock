@@ -35,7 +35,7 @@ import kotlin.math.roundToInt
 internal fun useWideClockPages(width: Float, height: Float, fontScale: Float): Boolean =
     width >= maxOf(720f, 2f * (132f * fontScale * 2f + 26f) + 56f) && height >= 520f
 
-/** One clock node remains mounted as the two destinations trade their functional panes. */
+/** A retained two-pane clock destination, with only its active functional pane accepting input. */
 @Composable
 internal fun WideClockPages(
     worldSelected: Boolean,
@@ -73,14 +73,16 @@ internal fun WideClockPages(
         val editorVisible = showAlarmEditor && !worldSelected
         val clockAlpha = animateFloatAsState(if (editorVisible) 0f else 1f, tween(200), label = "clockEditorVisibility")
 
-        Box(Modifier.width(pane).fillMaxHeight().graphicsLayer {
+        // Pager destinations retain their own two-pane content. Do not leave an invisible
+        // outgoing pane over the clock: its touch blocker would swallow page swipes.
+        if (!worldSelected) Box(Modifier.width(pane).fillMaxHeight().graphicsLayer {
             outsets = alarmFadeBounds
             alpha = (1f - motion.value * 1.65f).coerceIn(0f, 1f)
             translationX = -24.dp.toPx() * motion.value
         }.inactiveClockPane(worldSelected), contentAlignment = Alignment.TopCenter) {
             alarmContent(Modifier.width(minOf(pane - 16.dp, 520.dp)).fillMaxHeight())
         }
-        Box(Modifier.offset(x = pane + 24.dp).width(pane).fillMaxHeight()
+        if (worldSelected) Box(Modifier.offset(x = pane + 24.dp).width(pane).fillMaxHeight()
             .graphicsLayer {
                 outsets = cityFadeBounds
                 // Each card and its halo share one staggered entrance below. A second

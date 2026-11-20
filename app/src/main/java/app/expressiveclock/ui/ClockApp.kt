@@ -178,14 +178,6 @@ fun ClockApp(startTab: String? = null, startRequestId: Long = 0L, vm: ClockViewM
         val wideClockPages = app.expressiveclock.ui.screens.useWideClockPages(
             windowSizeInfo.screenWidthDp.value, windowSizeInfo.screenHeightDp.value,
             androidx.compose.ui.platform.LocalDensity.current.fontScale)
-        // A stable host keeps the wide clock alive through tab changes and responsive relayout.
-        // Alarm and World remain independent selected destinations, including startup/intent routing.
-        val contentTab = if (activeTab == Tab.WORLD) Tab.ALARMS else activeTab
-        var lastClockTab by rememberSaveable { mutableStateOf(if (activeTab == Tab.WORLD) Tab.WORLD else Tab.ALARMS) }
-        val clockDestination = if (activeTab == Tab.ALARMS || activeTab == Tab.WORLD) activeTab else lastClockTab
-        androidx.compose.runtime.SideEffect {
-            if (activeTab == Tab.ALARMS || activeTab == Tab.WORLD) lastClockTab = activeTab
-        }
 
         fun openSettings() {
             showSettings = true
@@ -351,32 +343,33 @@ fun ClockApp(startTab: String? = null, startRequestId: Long = 0L, vm: ClockViewM
             val pagerState = rememberPagerState(initialPage = activeTab.ordinal, pageCount = { Tab.entries.size })
             var pagerNavigationTarget by remember { mutableStateOf<Int?>(null) }
             var pagerNavigationRequest by remember { mutableIntStateOf(0) }
-            LaunchedEffect(activeTab, wideClockPages, pagerNavigationRequest) {
-                if (!wideClockPages) {
-                    val destination = activeTab.ordinal
-                    pagerNavigationTarget = destination
-                    // A return tap can target settledPage while the pager is still between pages.
-                    // Cancel/retarget immediately instead of leaving that interrupted scroll unfinished.
-                    val request = pagerNavigationRequest
-                    try {
-                        if (pagerState.currentPage != destination || pagerState.currentPageOffsetFraction != 0f) {
-                            pagerState.animateScrollToPage(destination,
-                                animationSpec = spring(stiffness = 380f, dampingRatio = .86f))
-                        }
-                    } finally {
-                        // A user drag can cancel the animation. Release that request,
-                        // without clearing a newer bottom-bar tap that replaced it.
-                        if (request == pagerNavigationRequest) pagerNavigationTarget = null
+            LaunchedEffect(activeTab, pagerNavigationRequest) {
+                val destination = activeTab.ordinal
+                pagerNavigationTarget = destination
+                // A return tap can target settledPage while the pager is still between pages.
+                // Cancel/retarget immediately instead of leaving that interrupted scroll unfinished.
+                val request = pagerNavigationRequest
+                try {
+                    if (pagerState.currentPage != destination || pagerState.currentPageOffsetFraction != 0f) {
+                        pagerState.animateScrollToPage(destination,
+                            animationSpec = spring(stiffness = 380f, dampingRatio = .86f))
                     }
-                } else pagerNavigationTarget = null
+                } finally {
+                    // A user drag can cancel the animation. Release that request,
+                    // without clearing a newer bottom-bar tap that replaced it.
+                    if (request == pagerNavigationRequest) pagerNavigationTarget = null
+                }
             }
-            LaunchedEffect(pagerState, wideClockPages) {
-                if (!wideClockPages) snapshotFlow { Triple(pagerState.settledPage, pagerNavigationTarget, pagerState.isScrollInProgress) }
+
+            LaunchedEffect(pagerState) {
+                snapshotFlow { Triple(pagerState.settledPage, pagerNavigationTarget, pagerState.isScrollInProgress) }
                     .distinctUntilChanged().drop(1).collect { (page, requested, scrolling) ->
                         // Intermediate programmatic settlements must not overwrite a newer tap.
                         if (requested == null && !scrolling) tab = Tab.entries[page]
                     }
             }
+            // The same retained pager serves compact and wide layouts. Each wide clock
+            // destination keeps its two-pane composition instead of showing the phone screen.
             val pageContent: @Composable (Tab) -> Unit = { current ->
                 when (if (current == Tab.WORLD) Tab.ALARMS else current) {
                     Tab.ALARMS -> {
@@ -397,7 +390,7 @@ fun ClockApp(startTab: String? = null, startRequestId: Long = 0L, vm: ClockViewM
                         }
                         if (wideClockPages) {
                             app.expressiveclock.ui.screens.WideClockPages(
-                                worldSelected = clockDestination == Tab.WORLD,
+                                worldSelected = current == Tab.WORLD,
                                 cities = cities, selectedZoneId = selectedWorldCityZoneId,
                                 onSelectCity = { selectedWorldCityZoneId = it.zone.id },
                                 onShowLocalTime = { selectedWorldCityZoneId = null },
@@ -425,7 +418,7 @@ fun ClockApp(startTab: String? = null, startRequestId: Long = 0L, vm: ClockViewM
                             }
                         }
                     }
-                    Tab.WORLD -> Unit // World shares the stable host above, never its destination state.
+                    Tab.WORLD -> Unit // Routed to the clock content branch above.
 
                     Tab.TIMERS -> {
                         val timer by vm.timer.collectAsStateWithLifecycle()
@@ -472,38 +465,28 @@ fun ClockApp(startTab: String? = null, startRequestId: Long = 0L, vm: ClockViewM
                 }
             }
 
-            if (wideClockPages) {
-                AnimatedContent(targetState = contentTab, transitionSpec = {
-                    val forward = targetState.ordinal > initialState.ordinal
-                    slideInHorizontally { if (forward) it else -it } + fadeIn() togetherWith
-                        slideOutHorizontally { if (forward) -it else it } + fadeOut()
-                }, label = "wideTab") { pageContent(it) }
-            } else {
-                HorizontalPager(
-                    state = pagerState,
-                    beyondViewportPageCount = Tab.entries.size - 1,
-                    key = { Tab.entries[it].key },
-                    userScrollEnabled = !showSettings && !showAddCitySheet && !showNewAlarmPicker && editing == null &&
-                        alarmSelectionCount == 0 && worldPresentation.deletionSelection.value.isEmpty(),
-                    flingBehavior = PagerDefaults.flingBehavior(pagerState,
-                        snapAnimationSpec = spring(stiffness = 380f, dampingRatio = .86f)),
-                    modifier = Modifier.fillMaxSize(),
-                ) { pageContent(Tab.entries[it]) }
-            }
+            HorizontalPager(
+                state = pagerState,
+                beyondViewportPageCount = Tab.entries.size - 1,
+                key = { Tab.entries[it].key },
+                userScrollEnabled = !showSettings && !showAddCitySheet && !showNewAlarmPicker && editing == null &&
+                    alarmSelectionCount == 0 && worldPresentation.deletionSelection.value.isEmpty(),
+                flingBehavior = PagerDefaults.flingBehavior(pagerState,
+                    snapAnimationSpec = spring(stiffness = 380f, dampingRatio = .86f)),
+                modifier = Modifier.fillMaxSize(),
+            ) { pageContent(Tab.entries[it]) }
 
-            val dockTab = if (!wideClockPages && pagerNavigationTarget == null)
+            val dockTab = if (pagerNavigationTarget == null)
                 Tab.entries[pagerState.currentPage] else activeTab
             ClockDock(
                 destinations = listOf(Tab.ALARMS, Tab.WORLD, Tab.TIMERS, Tab.STOPWATCH),
                 selected = dockTab,
-                pagePosition = if (wideClockPages) null else {
-                    { pagerState.currentPage + pagerState.currentPageOffsetFraction }
+                pagePosition = {
+                    pagerState.currentPage + pagerState.currentPageOffsetFraction
                 },
                 onSelect = {
-                    if (!wideClockPages) {
-                        pagerNavigationTarget = it.ordinal
-                        pagerNavigationRequest++
-                    }
+                    pagerNavigationTarget = it.ordinal
+                    pagerNavigationRequest++
                     tab = it
                 },
                 // Timer and Stopwatch retain their existing in-content actions.

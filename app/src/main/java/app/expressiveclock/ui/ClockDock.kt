@@ -33,6 +33,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
@@ -201,6 +202,13 @@ fun ClockDock(
 @Composable
 private fun RowScope.DockItem(tab: Tab, selected: Boolean, iconColor: Color, onClick: () -> Unit) {
     var tapCount by remember { mutableIntStateOf(0) }
+    var previouslySelected by remember { mutableStateOf(selected) }
+    // A swipe selects a destination without invoking onClick. Use the same icon
+    // animation for every new selection, without playing it on initial composition.
+    LaunchedEffect(selected) {
+        if (selected && !previouslySelected) tapCount++
+        previouslySelected = selected
+    }
     val rotation = remember { Animatable(0f) }
     val selectedScale by animateFloatAsState(
         targetValue = if (selected) 1f else .94f,
@@ -252,7 +260,9 @@ private fun RowScope.DockItem(tab: Tab, selected: Boolean, iconColor: Color, onC
                 interactionSource = remember { MutableInteractionSource() },
                 indication = null,
                 onClick = {
-                    tapCount++
+                    // New selections animate via selected above. A repeated tap
+                    // still replays the animation without double-triggering a new tab.
+                    if (selected) tapCount++
                     onClick()
                 },
             ),

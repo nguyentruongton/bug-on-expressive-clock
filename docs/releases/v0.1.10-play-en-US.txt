@@ -1,0 +1,8 @@
+What's new:
+• Added horizontal swipe navigation when your foldable is unfolded.
+• Preserved the unfolded Alarm and World Clock layouts.
+• Fixed hidden touch areas that could block swipes.
+• Added bottom-bar icon animations when swiping between tabs.
+• Kept the navigation indicator in sync with your finger.
+
+Enjoy!
