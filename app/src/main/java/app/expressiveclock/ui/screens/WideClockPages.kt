@@ -39,6 +39,9 @@ internal fun useWideClockPages(width: Float, height: Float, fontScale: Float): B
 @Composable
 internal fun WideClockPages(
     worldSelected: Boolean,
+    clockOnly: Boolean = false,
+    panesOnly: Boolean = false,
+    clockProgress: (() -> Float)? = null,
     cities: List<WorldCity>, selectedZoneId: String?,
     onSelectCity: (WorldCity) -> Unit, onShowLocalTime: () -> Unit,
     alarmContent: @Composable (Modifier) -> Unit,
@@ -62,7 +65,7 @@ internal fun WideClockPages(
     val scheme = MaterialTheme.colorScheme
     val density = LocalDensity.current
     val use24h = rememberSystem24HourFormat()
-    BoxWithConstraints(modifier.fillMaxSize().worldClockAmbient(scheme.primary, scheme.surface.luminance() < .5f)) {
+    BoxWithConstraints(modifier.fillMaxSize().then(if (clockOnly) Modifier else Modifier.worldClockAmbient(scheme.primary, scheme.surface.luminance() < .5f))) {
         val pane = (maxWidth - 24.dp) / 2
         val cityFadeBounds = remember(pane) { cityLightLayerOutsets((pane - 26.dp) / 2) }
         val alarmFadeBounds = remember { LayerOutsets(32.dp) }
@@ -75,14 +78,14 @@ internal fun WideClockPages(
 
         // Pager destinations retain their own two-pane content. Do not leave an invisible
         // outgoing pane over the clock: its touch blocker would swallow page swipes.
-        if (!worldSelected) Box(Modifier.width(pane).fillMaxHeight().graphicsLayer {
+        if (!clockOnly && !worldSelected) Box(Modifier.width(pane).fillMaxHeight().graphicsLayer {
             outsets = alarmFadeBounds
             alpha = (1f - motion.value * 1.65f).coerceIn(0f, 1f)
             translationX = -24.dp.toPx() * motion.value
         }.inactiveClockPane(worldSelected), contentAlignment = Alignment.TopCenter) {
             alarmContent(Modifier.width(minOf(pane - 16.dp, 520.dp)).fillMaxHeight())
         }
-        if (worldSelected) Box(Modifier.offset(x = pane + 24.dp).width(pane).fillMaxHeight()
+        if (!clockOnly && worldSelected) Box(Modifier.offset(x = pane + 24.dp).width(pane).fillMaxHeight()
             .graphicsLayer {
                 outsets = cityFadeBounds
                 // Each card and its halo share one staggered entrance below. A second
@@ -97,44 +100,46 @@ internal fun WideClockPages(
         }
         // No AnimatedContent or keys around the clock: the hands and second-hand frame source
         // survive every Alarm/World switch, including interrupted position animations.
-        AnalogueWorldClock(clockCity.zone, now, Modifier.offset {
-            IntOffset(with(density) { (rightClock + (leftClock - rightClock) * motion.value).roundToPx() },
-                with(density) { top.roundToPx() })
-        }.size(dial).graphicsLayer { alpha = clockAlpha.value }
-            .then(if (editorVisible) Modifier.clearAndSetSemantics {} else Modifier), active = !editorVisible)
+        if (!panesOnly) {
+            AnalogueWorldClock(clockCity.zone, now, Modifier.offset {
+                IntOffset(with(density) { (rightClock + (leftClock - rightClock) * (clockProgress?.invoke() ?: motion.value)).roundToPx() },
+                    with(density) { top.roundToPx() })
+            }.size(dial).graphicsLayer { alpha = clockAlpha.value }
+                .then(if (editorVisible) Modifier.clearAndSetSemantics {} else Modifier), active = !editorVisible)
 
-        Box(Modifier.offset {
-            IntOffset(with(density) { ((pane + 24.dp) * (1f - motion.value)).roundToPx() },
-                with(density) { (top + dial + 24.dp).roundToPx() })
-        }.width(pane).graphicsLayer { alpha = clockAlpha.value }
-            .then(if (editorVisible) Modifier.clearAndSetSemantics {} else Modifier)) {
-            AnimatedContent(worldSelected, transitionSpec = {
-                (fadeIn(tween(250, delayMillis = 100)) + slideInVertically(tween(250)) { it / 10 }) togetherWith
-                    fadeOut(tween(160))
-            }, label = "sharedClockDetails") { world ->
-                Column(Modifier.fillMaxWidth(), horizontalAlignment = Alignment.CenterHorizontally,
-                    verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                    if (world) {
-                        MechanicalText(selected.city, WorldClockType.city(24.sp), scheme.onSurface,
-                            modifier = Modifier.fillMaxWidth(), selectionKey = selected.zone.id, progressiveBlur = true)
-                        val description = selected.timeAt(now).format(DateTimeFormatter.ofPattern("zzzz · EEE, d MMM", locale))
-                        WorldClockSubtitle(description)
-                    } else {
-                        val localTime = local.timeAt(now)
-                        val digits = localTime.format(DateTimeFormatter.ofPattern(if (use24h) "HH:mm:ss" else "hh:mm:ss"))
-                        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                            WorldClockDigitalReadout(digits, local.zone.id,
-                                scheme.onSurface, scheme.primary, modifier = Modifier.weight(1f))
-                            if (!use24h) Text(localTime.format(DateTimeFormatter.ofPattern("a", locale)),
-                                style = WorldClockType.secondary(14.sp), color = scheme.onSurface)
+            Box(Modifier.offset {
+                IntOffset(with(density) { ((pane + 24.dp) * (1f - (clockProgress?.invoke() ?: motion.value))).roundToPx() },
+                    with(density) { (top + dial + 24.dp).roundToPx() })
+            }.width(pane).graphicsLayer { alpha = clockAlpha.value }
+                .then(if (editorVisible) Modifier.clearAndSetSemantics {} else Modifier)) {
+                AnimatedContent(worldSelected, transitionSpec = {
+                    (fadeIn(tween(250, delayMillis = 100)) + slideInVertically(tween(250)) { it / 10 }) togetherWith
+                        fadeOut(tween(160))
+                }, label = "sharedClockDetails") { world ->
+                    Column(Modifier.fillMaxWidth(), horizontalAlignment = Alignment.CenterHorizontally,
+                        verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                        if (world) {
+                            MechanicalText(selected.city, WorldClockType.city(24.sp), scheme.onSurface,
+                                modifier = Modifier.fillMaxWidth(), selectionKey = selected.zone.id, progressiveBlur = true)
+                            val description = selected.timeAt(now).format(DateTimeFormatter.ofPattern("zzzz · EEE, d MMM", locale))
+                            WorldClockSubtitle(description)
+                        } else {
+                            val localTime = local.timeAt(now)
+                            val digits = localTime.format(DateTimeFormatter.ofPattern(if (use24h) "HH:mm:ss" else "hh:mm:ss"))
+                            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                                WorldClockDigitalReadout(digits, local.zone.id,
+                                    scheme.onSurface, scheme.primary, modifier = Modifier.weight(1f))
+                                if (!use24h) Text(localTime.format(DateTimeFormatter.ofPattern("a", locale)),
+                                    style = WorldClockType.secondary(14.sp), color = scheme.onSurface)
+                            }
+                            Text(local.timeAt(now).format(DateTimeFormatter.ofPattern("EEEE, d MMMM", locale)),
+                                style = MaterialTheme.typography.bodySmall, color = scheme.onSurfaceVariant)
                         }
-                        Text(local.timeAt(now).format(DateTimeFormatter.ofPattern("EEEE, d MMMM", locale)),
-                            style = MaterialTheme.typography.bodySmall, color = scheme.onSurfaceVariant)
                     }
                 }
             }
         }
-        if (showAlarmEditor) Box(Modifier.offset(x = pane + 24.dp).width(pane).fillMaxHeight()
+        if (!clockOnly && showAlarmEditor) Box(Modifier.offset(x = pane + 24.dp).width(pane).fillMaxHeight()
             .graphicsLayer { alpha = if (editorVisible) 1f else 0f }
             .inactiveClockPane(!editorVisible)) { alarmEditor() }
     }

@@ -143,12 +143,15 @@ class ClockViewModel(app: Application) : AndroidViewModel(app) {
 
     /* ── Alarms ─────────────────────────────────────────────────────────────────────────────── */
 
-    fun toggleAlarm(id: Long) = viewModelScope.launch {
+    fun toggleAlarm(id: Long, onEnabled: (Alarm) -> Unit = {}) = viewModelScope.launch {
         val next = store.updateAlarms { list -> list.map {
             if (it.id == id) it.copy(enabled = !it.enabled, snoozedUntilMillis = null, skippedOccurrenceMillis = null, skippedOccurrenceDate = null) else it
         } }
         next.firstOrNull { it.id == id }?.let { a ->
-            if (a.enabled) AlarmScheduler.schedule(ctx, a) else AlarmScheduler.cancel(ctx, id)
+            if (a.enabled) {
+                AlarmScheduler.schedule(ctx, a)
+                onEnabled(a)
+            } else AlarmScheduler.cancel(ctx, id)
         }
     }
 

@@ -62,6 +62,7 @@ import androidx.compose.foundation.layout.statusBars
 import app.expressiveclock.ui.screens.SelectionToolbar
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
@@ -218,13 +219,18 @@ fun ClockApp(startTab: String? = null, startRequestId: Long = 0L, vm: ClockViewM
             }
         }
         val snackbar = remember { SnackbarHostState() }
-        fun saveWithConfirmation(draft: Alarm) {
-            vm.saveAlarm(draft) { saved ->
-                val now = java.time.ZonedDateTime.now()
-                saved.nextFire(now)?.let { next ->
-                    scope.launch { snackbar.showSnackbar("Alarm in ${app.expressiveclock.core.humanUntil(now, next)}") }
+        fun confirmAlarm(saved: Alarm) {
+            if (!saved.enabled) return
+            val now = java.time.ZonedDateTime.now()
+            saved.nextFire(now)?.let { next ->
+                scope.launch {
+                    snackbar.currentSnackbarData?.dismiss()
+                    snackbar.showSnackbar("Alarm in ${app.expressiveclock.core.humanUntil(now, next)}")
                 }
             }
+        }
+        fun saveWithConfirmation(draft: Alarm) {
+            vm.saveAlarm(draft, ::confirmAlarm)
         }
 
         // Asked once, on first composition. Denying it costs the notifications and nothing else.
@@ -277,7 +283,7 @@ fun ClockApp(startTab: String? = null, startRequestId: Long = 0L, vm: ClockViewM
                 Scaffold(
             modifier = Modifier.fillMaxSize(),
             containerColor = Color.Transparent,
-            snackbarHost = { SnackbarHost(snackbar, Modifier.padding(bottom = DOCK_RESERVE)) },
+            snackbarHost = { SnackbarHost(snackbar, Modifier.padding(bottom = DOCK_RESERVE)) { AlarmConfirmation(it) } },
             topBar = {
                 if ((activeTab == Tab.ALARMS && alarmSelectionCount > 0) ||
                     (activeTab == Tab.WORLD && worldPresentation.deletionSelection.value.isNotEmpty())) {
@@ -379,7 +385,7 @@ fun ClockApp(startTab: String? = null, startRequestId: Long = 0L, vm: ClockViewM
                                 AlarmsScreen(alarms = alarms, weekStart = settings.alarms.weekStart,
                                     staggerEntranceToken = isPostOnboardingStaggerToken,
                                     onStaggerConsumed = { isPostOnboardingStaggerToken = 0 },
-                                    onToggle = vm::toggleAlarm, onEdit = { editing = it },
+                                    onToggle = { vm.toggleAlarm(it, ::confirmAlarm) }, onEdit = { editing = it },
                                     onAddAlarm = { showNewAlarmPicker = true },
                                     onDeleteAlarms = { vm.deleteAlarms(it) },
                                     onSelectionCountChange = { alarmSelectionCount = it },
@@ -391,6 +397,7 @@ fun ClockApp(startTab: String? = null, startRequestId: Long = 0L, vm: ClockViewM
                         if (wideClockPages) {
                             app.expressiveclock.ui.screens.WideClockPages(
                                 worldSelected = current == Tab.WORLD,
+                                panesOnly = true,
                                 cities = cities, selectedZoneId = selectedWorldCityZoneId,
                                 onSelectCity = { selectedWorldCityZoneId = it.zone.id },
                                 onShowLocalTime = { selectedWorldCityZoneId = null },
@@ -475,6 +482,25 @@ fun ClockApp(startTab: String? = null, startRequestId: Long = 0L, vm: ClockViewM
                     snapAnimationSpec = spring(stiffness = 380f, dampingRatio = .86f)),
                 modifier = Modifier.fillMaxSize(),
             ) { pageContent(Tab.entries[it]) }
+
+            if (wideClockPages) {
+                // A single clock stays mounted across both clock destinations. Its host
+                // leaves with World Clock only when navigating onwards to Timer.
+                app.expressiveclock.ui.screens.WideClockPages(
+                    worldSelected = pagerState.currentPage >= Tab.WORLD.ordinal,
+                    clockOnly = true,
+                    clockProgress = { (pagerState.currentPage + pagerState.currentPageOffsetFraction).coerceIn(0f, 1f) },
+                    cities = cities, selectedZoneId = selectedWorldCityZoneId,
+                    onSelectCity = { selectedWorldCityZoneId = it.zone.id },
+                    onShowLocalTime = { selectedWorldCityZoneId = null },
+                    alarmContent = {}, showAlarmEditor = editing != null, alarmEditor = {},
+                    modifier = Modifier.graphicsLayer {
+                        val page = pagerState.currentPage + pagerState.currentPageOffsetFraction
+                        translationX = -(page - 1f).coerceAtLeast(0f) * size.width
+                        alpha = if (page >= 2f) 0f else 1f
+                    }.then(if (pagerState.currentPage >= 2) Modifier.clearAndSetSemantics {} else Modifier).padding(body),
+                )
+            }
 
             val dockTab = if (pagerNavigationTarget == null)
                 Tab.entries[pagerState.currentPage] else activeTab

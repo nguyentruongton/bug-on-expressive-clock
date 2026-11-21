@@ -1,0 +1,7 @@
+What's new:
+• Restored the shared analogue clock animation between Alarms and World Clock on unfolded devices.
+• Added a compact, shadow-free alarm confirmation with a clear countdown.
+• Show alarm confirmations when enabling alarms as well as saving them.
+• Preserved swipe navigation and responsive bottom-bar animations.
+
+Enjoy!
