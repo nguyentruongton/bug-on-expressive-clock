@@ -1,0 +1,5 @@
+What's new:
+• Shortened the upcoming-alarm notification action to “Dismiss”.
+• Dismiss still skips only the upcoming occurrence, keeping recurring alarms enabled.
+
+Enjoy!

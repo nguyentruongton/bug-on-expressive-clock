@@ -61,7 +61,7 @@ internal object UpcomingAlarm {
             .setContentTitle("Upcoming alarm · $time").setContentText(alarm.label.ifBlank { "Alarm" })
             .setContentIntent(Notifications.openApp(context, Notifications.TAB_ALARMS))
             .setSilent(true).setTimeoutAfter((at-System.currentTimeMillis()).coerceAtLeast(1))
-            .addAction(0,"Dismiss this occurrence",pending(context,alarm.id,at,SKIP)).build()
+            .addAction(0,"Dismiss",pending(context,alarm.id,at,SKIP)).build()
         try { NotificationManagerCompat.from(context).notify(tag(alarm.id),0,n) } catch (_: SecurityException) { }
     }
     suspend fun receive(context: Context, intent: Intent) {
