@@ -795,7 +795,7 @@ private fun ExpandedRunningTimerBody(
                             .height(56.dp),
                     ) {
                         WidePill(
-                            text = "Stop",
+                            text = "Dismiss",
                             icon = Icons.Rounded.Close,
                             onClick = onCancel,
                             container = MaterialTheme.colorScheme.tertiaryContainer.copy(alpha = 0.88f),
@@ -1284,7 +1284,7 @@ private fun TimerControls(
             contentAlignment = Alignment.Center,
         ) {
             WidePill(
-                text = "Stop",
+                text = "Dismiss",
                 icon = Icons.Rounded.Close,
                 onClick = onCancel,
                 container = MaterialTheme.colorScheme.tertiaryContainer.copy(alpha = 0.88f),

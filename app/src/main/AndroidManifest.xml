@@ -63,7 +63,7 @@
             android:exported="true"
             android:icon="@mipmap/ic_launcher_launcher"
             android:roundIcon="@mipmap/ic_launcher_launcher"
-            android:label="@string/app_name"
+            android:label="@string/launcher_name"
             android:targetActivity=".MainActivity">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
@@ -76,7 +76,7 @@
             android:exported="true"
             android:icon="@mipmap/ic_launcher_chooser"
             android:roundIcon="@mipmap/ic_launcher_chooser"
-            android:label="@string/app_name"
+            android:label="@string/launcher_name"
             android:targetActivity=".MainActivity">
             <intent-filter>
                 <action android:name="android.intent.action.SHOW_ALARMS" />

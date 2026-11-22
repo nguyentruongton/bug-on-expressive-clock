@@ -4,6 +4,16 @@ import android.animation.ValueAnimator
 import androidx.compose.animation.*
 import androidx.compose.animation.core.*
 import androidx.compose.foundation.layout.*
+import androidx.compose.ui.input.nestedscroll.nestedScroll
+import androidx.compose.ui.input.nestedscroll.NestedScrollConnection
+import androidx.compose.ui.input.nestedscroll.NestedScrollSource
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.unit.Velocity
+import androidx.compose.foundation.gestures.draggable
+import androidx.compose.foundation.gestures.rememberDraggableState
+import androidx.compose.foundation.gestures.Orientation
+import androidx.compose.foundation.clickable
+import kotlinx.coroutines.launch
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.*
@@ -49,6 +59,9 @@ internal fun WideClockPages(
     alarmEditor: @Composable () -> Unit,
     modifier: Modifier = Modifier,
 ) {
+    val presentation = LocalWorldClockPresentation.current
+    val toggleScope = rememberCoroutineScope()
+    var toggleJob by remember { mutableStateOf<kotlinx.coroutines.Job?>(null) }
     val locale = androidx.compose.ui.platform.LocalConfiguration.current.locales[0]
     val now by rememberWallTicker()
     val local = prettify(ZoneId.systemDefault().id).copy(region = "Local Time")
@@ -65,7 +78,27 @@ internal fun WideClockPages(
     val scheme = MaterialTheme.colorScheme
     val density = LocalDensity.current
     val use24h = rememberSystem24HourFormat()
-    BoxWithConstraints(modifier.fillMaxSize().then(if (clockOnly) Modifier else Modifier.worldClockAmbient(scheme.primary, scheme.surface.luminance() < .5f))) {
+    val scrollConnection = remember(worldSelected, clockOnly) {
+        object : NestedScrollConnection {
+            override fun onPreScroll(available: Offset, source: NestedScrollSource): Offset {
+                if (!worldSelected || clockOnly || source != NestedScrollSource.UserInput) return Offset.Zero
+                if (available.y > 0f && presentation.grid.canScrollBackward) return Offset.Zero
+                toggleJob?.cancel()
+                val old = presentation.collapse.floatValue
+                val range = with(density) { 280.dp.toPx() }
+                presentation.collapse.floatValue = (old - available.y / range).coerceIn(0f, 1f)
+                return Offset(0f, (old - presentation.collapse.floatValue) * range)
+            }
+            override suspend fun onPreFling(available: Velocity): Velocity {
+                if (!worldSelected || clockOnly || presentation.collapse.floatValue in listOf(0f, 1f)) return Velocity.Zero
+                val start = presentation.collapse.floatValue
+                androidx.compose.animation.core.animate(start, worldClockSnapTarget(start, -available.y / density.density),
+                    animationSpec = tween(260)) { value, _ -> presentation.collapse.floatValue = value }
+                return Velocity(0f, available.y)
+            }
+        }
+    }
+    BoxWithConstraints(modifier.nestedScroll(scrollConnection).fillMaxSize().then(if (clockOnly) Modifier else Modifier.worldClockAmbient(scheme.primary, scheme.surface.luminance() < .5f))) {
         val pane = (maxWidth - 24.dp) / 2
         val cityFadeBounds = remember(pane) { cityLightLayerOutsets((pane - 26.dp) / 2) }
         val alarmFadeBounds = remember { LayerOutsets(32.dp) }
@@ -101,15 +134,38 @@ internal fun WideClockPages(
         // No AnimatedContent or keys around the clock: the hands and second-hand frame source
         // survive every Alarm/World switch, including interrupted position animations.
         if (!panesOnly) {
-            AnalogueWorldClock(clockCity.zone, now, Modifier.offset {
+            Box(Modifier.offset {
                 IntOffset(with(density) { (rightClock + (leftClock - rightClock) * (clockProgress?.invoke() ?: motion.value)).roundToPx() },
                     with(density) { top.roundToPx() })
-            }.size(dial).graphicsLayer { alpha = clockAlpha.value }
-                .then(if (editorVisible) Modifier.clearAndSetSemantics {} else Modifier), active = !editorVisible)
+            }.size(dial).graphicsLayer { alpha = clockAlpha.value; outsets = LayerOutsets(dial * .4f); clip = false }
+                .then(if (editorVisible) Modifier.clearAndSetSemantics {} else Modifier)
+                .then(if (worldSelected) Modifier.draggable(
+                    orientation = Orientation.Vertical,
+                    state = rememberDraggableState { delta ->
+                        toggleJob?.cancel()
+                        presentation.collapse.floatValue = (presentation.collapse.floatValue - delta / with(density) { dial.toPx() }).coerceIn(0f, 1f)
+                    },
+                    onDragStopped = { velocity ->
+                        val start = presentation.collapse.floatValue
+                        toggleJob = toggleScope.launch {
+                            androidx.compose.animation.core.animate(start, worldClockSnapTarget(start, -velocity / density.density),
+                                animationSpec = tween(260)) { value, _ -> presentation.collapse.floatValue = value }
+                        }
+                    },
+                ).clickable(interactionSource = remember { androidx.compose.foundation.interaction.MutableInteractionSource() }, indication = null, onClickLabel = "Switch clock style") {
+                    toggleJob?.cancel()
+                    toggleJob = toggleScope.launch {
+                        val start = presentation.collapse.floatValue
+                        androidx.compose.animation.core.animate(start, if (start < .5f) 1f else 0f, animationSpec = tween(260)) { value, _ -> presentation.collapse.floatValue = value }
+                    }
+                } else Modifier), contentAlignment = Alignment.Center) {
+                WorldClockHeader(clockCity, now, dial,
+                    presentation.collapse.floatValue * (clockProgress?.invoke() ?: motion.value), showDetails = false)
+            }
 
             Box(Modifier.offset {
                 IntOffset(with(density) { ((pane + 24.dp) * (1f - (clockProgress?.invoke() ?: motion.value))).roundToPx() },
-                    with(density) { (top + dial + 24.dp).roundToPx() })
+                    with(density) { (top + worldClockDetailsTop(dial, presentation.collapse.floatValue * (clockProgress?.invoke() ?: motion.value), use24h)).roundToPx() })
             }.width(pane).graphicsLayer { alpha = clockAlpha.value }
                 .then(if (editorVisible) Modifier.clearAndSetSemantics {} else Modifier)) {
                 AnimatedContent(worldSelected, transitionSpec = {

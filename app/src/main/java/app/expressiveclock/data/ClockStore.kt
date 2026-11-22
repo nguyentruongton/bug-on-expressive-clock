@@ -215,6 +215,7 @@ internal fun Preferences.toSettings() = ClockSettings(
         weekStart = enumOr(this[stringPreferencesKey("weekStart")], WeekStart.SYSTEM),
     ),
     world = WorldClockSettings(
+        defaultStyle = enumOr(this[stringPreferencesKey("worldDefaultStyle")], WorldClockStyle.ANALOGUE),
         deleteTutorialShown = this[booleanPreferencesKey("worldDeleteTutorialShown")] ?: false,
         showSeconds = this[booleanPreferencesKey("showSeconds")] ?: false,
         hourFormat = enumOr(this[stringPreferencesKey("hourFormat")], HourFormat.SYSTEM),
@@ -260,6 +261,7 @@ internal fun androidx.datastore.preferences.core.MutablePreferences.writeSetting
     this[intPreferencesKey("silenceAfter")] = s.alarms.silenceAfterMinutes
     this[intPreferencesKey("snooze")] = s.alarms.snoozeMinutes
     this[stringPreferencesKey("weekStart")] = s.alarms.weekStart.name
+    this[stringPreferencesKey("worldDefaultStyle")] = s.world.defaultStyle.name
     this[booleanPreferencesKey("showSeconds")] = s.world.showSeconds
     this[booleanPreferencesKey("worldDeleteTutorialShown")] = s.world.deleteTutorialShown
     this[stringPreferencesKey("hourFormat")] = s.world.hourFormat.name
@@ -380,6 +382,7 @@ private fun encodeWidgetConfig(c: WidgetConfig) = JSONObject()
     .put("palette", c.palette.name)
     .put("swatch", c.swatch.name)
     .apply { c.analogPrimaryColor?.let { put("anPrimaryCol", it) } }
+    .apply { c.analogFaceColor?.let { put("anFaceCol", it) } }
     .toString()
 
 /**
@@ -442,6 +445,7 @@ private fun parseWidgetConfig(s: String): WidgetConfig = runCatching {
         palette = enumOr(o.optString("palette"), Palette.CONCEPT),
         swatch = enumOr(o.optString("swatch"), WidgetColorSwatch.BLUE),
         analogPrimaryColor = o.optLong("anPrimaryCol").takeIf { it != 0L },
+        analogFaceColor = if (o.has("anFaceCol")) o.getLong("anFaceCol") else null,
     )
 }.getOrDefault(WidgetConfig())
 

@@ -24,19 +24,21 @@ import app.expressiveclock.ui.theme.Numerals
 import kotlinx.coroutines.delay
 import kotlin.math.abs
 
+internal const val WORLD_CLOCK_READOUT_WIDTH_FRACTION = .48f
+
 private data class ClockReelTarget(val char: Char, val location: String)
 
 /** Timer setup's ink-tight rounded numerals and exact horizontal layout, fitted to this header. */
 @Composable
 internal fun WorldClockDigitalReadout(text: String, locationKey: String,
-    foreground: Color, accent: Color, modifier: Modifier = Modifier) {
+    foreground: Color, accent: Color, modifier: Modifier = Modifier, widthFraction: Float = WORLD_CLOCK_READOUT_WIDTH_FRACTION) {
     var previousText by remember { mutableStateOf(text) }
     var previousLocation by remember { mutableStateOf(locationKey) }
     val selection = remember(text, locationKey) { previousLocation != locationKey }
     val changes = remember(text, locationKey) { mechanicalChanges(previousText, text) }
     SideEffect { previousText = text; previousLocation = locationKey }
     BoxWithConstraints(modifier.fillMaxWidth().clearAndSetSemantics { contentDescription = text }) {
-        val displayWidth = maxWidth * .48f
+        val displayWidth = maxWidth * widthFraction.coerceIn(.1f, 1f)
         val metrics = timerReadoutGeometry(displayWidth, text)
         Row(Modifier.width(displayWidth).align(Alignment.Center), horizontalArrangement = Arrangement.spacedBy(metrics.spacing),
             verticalAlignment = Alignment.CenterVertically) {

@@ -40,7 +40,8 @@ class LayoutProbe : Instrumentation() {
                     val duration = Duration.ofSeconds(seconds)
                     val timer = if (command == "timer") ClockTimer(-17017, "ADB layout probe", duration, TimerState.RUNNING,
                         SystemClock.elapsedRealtime() + duration.toMillis()) else null
-                    store.putTimer(timer); TimerScheduler.sync(ctx, timer)
+                    val fixtureTimer = if (args.getString("finished") == "true") timer?.copy(state = TimerState.FINISHED) else timer
+                    store.putTimer(fixtureTimer); TimerScheduler.sync(ctx, fixtureTimer)
                     val sw = if (command == "stopwatch") Stopwatch(true, SystemClock.elapsedRealtime(), duration) else Stopwatch()
                     store.putStopwatch(sw)
                     if (sw.running) Notifications.showStopwatch(ctx, sw) else Notifications.hideStopwatch(ctx)

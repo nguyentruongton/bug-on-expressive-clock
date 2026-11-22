@@ -1,5 +1,7 @@
 package app.expressiveclock.ui
 
+import androidx.compose.foundation.gestures.scrollable
+import androidx.compose.foundation.gestures.Orientation
 import androidx.compose.foundation.pager.HorizontalPager
 import androidx.compose.foundation.pager.PagerDefaults
 import androidx.compose.foundation.pager.rememberPagerState
@@ -42,7 +44,6 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SnackbarHost
-import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
@@ -132,6 +133,13 @@ fun ClockApp(startTab: String? = null, startRequestId: Long = 0L, vm: ClockViewM
 
     val worldGrid = androidx.compose.foundation.lazy.grid.rememberLazyGridState()
     val worldCollapse = rememberSaveable { androidx.compose.runtime.mutableFloatStateOf(0f) }
+    var worldStyleInitialized by rememberSaveable { mutableStateOf(false) }
+    LaunchedEffect(isSettingsLoaded) {
+        if (isSettingsLoaded && !worldStyleInitialized) {
+            worldCollapse.floatValue = if (settings.world.defaultStyle == app.expressiveclock.data.WorldClockStyle.DIGITAL) 1f else 0f
+            worldStyleInitialized = true
+        }
+    }
     val worldPresentation = remember(worldGrid) { app.expressiveclock.ui.screens.WorldClockPresentation(worldGrid, worldCollapse) }
     val analogueMotion = rememberSaveable(stateSaver = app.expressiveclock.ui.screens.ClockHandMotionSaver) {
         mutableStateOf(app.expressiveclock.ui.screens.ClockHandMotion(java.time.ZoneId.systemDefault()))
@@ -218,15 +226,13 @@ fun ClockApp(startTab: String? = null, startRequestId: Long = 0L, vm: ClockViewM
                 )
             }
         }
-        val snackbar = remember { SnackbarHostState() }
+        val alarmConfirmations = remember(scope) { AlarmConfirmationPresenter(scope) }
+        val snackbar = alarmConfirmations.hostState
         fun confirmAlarm(saved: Alarm) {
             if (!saved.enabled) return
             val now = java.time.ZonedDateTime.now()
             saved.nextFire(now)?.let { next ->
-                scope.launch {
-                    snackbar.currentSnackbarData?.dismiss()
-                    snackbar.showSnackbar("Alarm in ${app.expressiveclock.core.humanUntil(now, next)}")
-                }
+                alarmConfirmations.show("Alarm in ${app.expressiveclock.core.alarmConfirmationUntil(now, next)}")
             }
         }
         fun saveWithConfirmation(draft: Alarm) {
@@ -472,12 +478,19 @@ fun ClockApp(startTab: String? = null, startRequestId: Long = 0L, vm: ClockViewM
                 }
             }
 
+            val pageGesturesEnabled = !showSettings && !showAddCitySheet && !showNewAlarmPicker && editing == null &&
+                alarmSelectionCount == 0 && worldPresentation.deletionSelection.value.isEmpty()
+            // The shared clock is a sibling of the pager. Route unconsumed horizontal
+            // drags through the same state so its new tap target cannot block page swipes.
+            Box(Modifier.fillMaxSize().scrollable(pagerState, Orientation.Horizontal,
+                enabled = pageGesturesEnabled, reverseDirection = ld == androidx.compose.ui.unit.LayoutDirection.Ltr,
+                flingBehavior = PagerDefaults.flingBehavior(pagerState,
+                    snapAnimationSpec = spring(stiffness = 380f, dampingRatio = .86f)))) {
             HorizontalPager(
                 state = pagerState,
                 beyondViewportPageCount = Tab.entries.size - 1,
                 key = { Tab.entries[it].key },
-                userScrollEnabled = !showSettings && !showAddCitySheet && !showNewAlarmPicker && editing == null &&
-                    alarmSelectionCount == 0 && worldPresentation.deletionSelection.value.isEmpty(),
+                userScrollEnabled = pageGesturesEnabled,
                 flingBehavior = PagerDefaults.flingBehavior(pagerState,
                     snapAnimationSpec = spring(stiffness = 380f, dampingRatio = .86f)),
                 modifier = Modifier.fillMaxSize(),
@@ -500,6 +513,8 @@ fun ClockApp(startTab: String? = null, startRequestId: Long = 0L, vm: ClockViewM
                         alpha = if (page >= 2f) 0f else 1f
                     }.then(if (pagerState.currentPage >= 2) Modifier.clearAndSetSemantics {} else Modifier).padding(body),
                 )
+            }
+
             }
 
             val dockTab = if (pagerNavigationTarget == null)

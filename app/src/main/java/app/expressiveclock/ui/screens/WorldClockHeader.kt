@@ -11,6 +11,7 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.Constraints
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Brush
@@ -20,6 +21,7 @@ import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.drawscope.scale
+import androidx.compose.ui.graphics.LayerOutsets
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.semantics.contentDescription
@@ -78,8 +80,21 @@ internal fun worldClockDetailsHeight(city: WorldCity, now: Long, width: Dp): Dp 
     return maxOf(100.dp, with(density) { WorldClockType.city(24.sp).lineHeight.toDp() + subtitle.size.height.toDp() } + 56.dp)
 }
 
+internal fun worldClockDigitalHeaderHeight(dial: Dp, details: Dp, showDetails: Boolean): Dp =
+    maxOf(details, dial * .42f + if (showDetails) 72.dp else 20.dp)
+
+/** Follow the actual digital ink, instead of leaving the analogue dial's empty footprint. */
+internal fun worldClockDetailsTop(dial: Dp, progress: Float, use24h: Boolean): Dp {
+    val digitalHeight = worldClockDigitalHeaderHeight(dial, 100.dp, false)
+    val textWidth = (dial - if (use24h) 0.dp else 32.dp).coerceAtLeast(1.dp) * app.expressiveclock.ui.WORLD_CLOCK_READOUT_WIDTH_FRACTION
+    val ink = app.expressiveclock.ui.timerReadoutGeometry(textWidth, "00:00:00").capHeight
+    val analogue = dial + 24.dp
+    val digital = (dial - digitalHeight) / 2 + 8.dp + ink + 24.dp
+    return analogue + (digital - analogue) * progress.coerceIn(0f, 1f)
+}
+
 @Composable
-internal fun WorldClockHeader(city: WorldCity, now: Long, dialSize: Dp, collapse: Float, detailsHeight: Dp = 100.dp) {
+internal fun WorldClockHeader(city: WorldCity, now: Long, dialSize: Dp, collapse: Float, detailsHeight: Dp = 100.dp, showDetails: Boolean = true) {
     val locale = androidx.compose.ui.platform.LocalConfiguration.current.locales[0]
     val local = city.timeAt(now)
     val use24h = rememberSystem24HourFormat()
@@ -88,16 +103,27 @@ internal fun WorldClockHeader(city: WorldCity, now: Long, dialSize: Dp, collapse
     val description = local.format(DateTimeFormatter.ofPattern("zzzz · EEE, d MMM", locale))
     val visibility = worldClockHeaderVisibility(collapse)
     val digitalAlpha = visibility.digital
-    Box(Modifier.fillMaxWidth().height(detailsHeight + dialSize * (1f - collapse))) {
-        Column(Modifier.fillMaxWidth().graphicsLayer { alpha = visibility.analogue }
+    val headerDensity = LocalDensity.current
+    val glowBounds = remember(dialSize) { LayerOutsets(dialSize * .4f) }
+    val analogueHeight = dialSize + if (showDetails) detailsHeight else 0.dp
+    BoxWithConstraints(Modifier.fillMaxWidth()) {
+    val digitalInk = app.expressiveclock.ui.timerReadoutGeometry(
+        (maxWidth - if (use24h) 0.dp else 32.dp).coerceAtLeast(1.dp) * app.expressiveclock.ui.WORLD_CLOCK_READOUT_WIDTH_FRACTION, "00:00:00").capHeight
+    val digitalHeight = if (showDetails) digitalInk + detailsHeight + 8.dp
+        else worldClockDigitalHeaderHeight(dialSize, detailsHeight, false)
+    Box(Modifier.fillMaxWidth().height(analogueHeight * (1f - collapse) + digitalHeight * collapse)) {
+        Column(Modifier.fillMaxWidth().graphicsLayer { alpha = visibility.analogue; outsets = glowBounds; clip = false }
                 .then(if (visibility.analogue <= 0f) Modifier.clearAndSetSemantics {} else Modifier),
                 horizontalAlignment = Alignment.CenterHorizontally) {
                 AnalogueWorldClock(city.zone, now, Modifier.size(dialSize * (1f - collapse)), active = visibility.analogue > 0f)
-                MechanicalText(city.city, style = WorldClockType.city(24.sp), color = foreground,
-                    modifier = Modifier.fillMaxWidth().padding(top = 32.dp),
-                    selectionKey = city.zone.id, active = visibility.analogue > 0f, progressiveBlur = true)
+
 
         }
+        if (showDetails) MechanicalText(city.city, style = WorldClockType.city(24.sp), color = foreground,
+            modifier = Modifier.fillMaxWidth().offset {
+                val y = (dialSize + 32.dp) * (1f - collapse) + (digitalInk + 28.dp) * collapse
+                IntOffset(0, with(headerDensity) { y.roundToPx() })
+            }, selectionKey = city.zone.id, progressiveBlur = true)
         Column(Modifier.fillMaxWidth().align(Alignment.TopCenter).padding(top = 8.dp + dialSize * .5f * (1f - collapse))
             .graphicsLayer { alpha = digitalAlpha }
             .then(if (digitalAlpha < .5f) Modifier.clearAndSetSemantics {} else Modifier), horizontalAlignment = Alignment.CenterHorizontally) {
@@ -114,7 +140,8 @@ internal fun WorldClockHeader(city: WorldCity, now: Long, dialSize: Dp, collapse
 
             }
         }
-        WorldClockSubtitle(description, Modifier.align(Alignment.BottomCenter).padding(bottom = 14.dp))
+        if (showDetails) WorldClockSubtitle(description, Modifier.align(Alignment.BottomCenter).padding(bottom = 14.dp))
+    }
     }
 }
 

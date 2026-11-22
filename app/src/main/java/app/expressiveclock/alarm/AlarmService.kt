@@ -201,7 +201,7 @@ class AlarmService : Service() {
                 .setVisibility(NotificationCompat.VISIBILITY_PUBLIC)
                 .setOngoing(true)
                 .setContentIntent(Notifications.openApp(context, Notifications.TAB_TIMERS))
-                .addAction(0, "Stop", Notifications.broadcast(context, ClockActionReceiver.ACTION_TIMER_CANCEL, 24))
+                .addAction(0, "Dismiss", Notifications.broadcast(context, ClockActionReceiver.ACTION_TIMER_CANCEL, 24))
                 .build()
     }
 }

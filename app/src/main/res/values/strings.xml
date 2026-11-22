@@ -1,5 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
+    <string name="launcher_name">Clock</string>
     <string name="app_name">Expressive Clock</string>
     <string name="analog_widget_label">Analog Clock</string>
     <string name="digital_widget_label">Digital Clock</string>

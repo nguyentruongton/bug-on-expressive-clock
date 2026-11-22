@@ -97,6 +97,7 @@ import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.outlined.Schedule
+import androidx.compose.material.icons.outlined.Public
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.ArrowBack
 import androidx.compose.material.icons.outlined.CalendarMonth
@@ -481,6 +482,13 @@ fun SettingsScreen(
                 )
                 SettingsDivider()
                 SettingsNavigateRow(
+                    icon = Icons.Outlined.Public,
+                    title = "Default World Clock style",
+                    subtitle = settings.world.defaultStyle.label,
+                    onClick = { picker = SettingsPicker.WORLD_STYLE },
+                )
+                SettingsDivider()
+                SettingsNavigateRow(
                     icon = Icons.Outlined.HourglassEmpty,
                     title = "Show setup again",
                     subtitle = "Reopen the first-launch permissions setup",
@@ -617,6 +625,17 @@ fun SettingsScreen(
                 onDismiss = { picker = null },
                 onSave = { newPresets ->
                     onChange { it.copy(timers = it.timers.copy(presets = newPresets)) }
+                    picker = null
+                },
+            )
+            SettingsPicker.WORLD_STYLE -> ChoicePickerDialog(
+                title = "Default World Clock style",
+                value = settings.world.defaultStyle,
+                options = app.expressiveclock.data.WorldClockStyle.entries,
+                label = { it.label },
+                onDismiss = { picker = null },
+                onSelect = { value ->
+                    onChange { it.copy(world = it.world.copy(defaultStyle = value)) }
                     picker = null
                 },
             )
@@ -1259,7 +1278,7 @@ private fun OverlayCalibrationDialog(
     }
 }
 
-private enum class SettingsPicker { ALARM_CARD_FORMAT, THEME, SILENCE, SNOOZE, WEEK_START, PRIVACY, PRESETS, STARTUP_PAGE }
+private enum class SettingsPicker { ALARM_CARD_FORMAT, THEME, SILENCE, SNOOZE, WEEK_START, PRIVACY, PRESETS, STARTUP_PAGE, WORLD_STYLE }
 
 @Composable
 private fun DefaultStartupPageDialog(

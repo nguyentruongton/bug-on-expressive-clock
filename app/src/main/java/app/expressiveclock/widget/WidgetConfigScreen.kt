@@ -728,7 +728,7 @@ private fun DigitalControls(
             "DAY" -> config.digitalDayColor
             "DATE" -> config.digitalDateColor
             "ANALOG_SECOND" -> config.analogSecondHandColor
-            "ANALOG_MAIN" -> config.analogPrimaryColor ?: if (config.colour == ColourSource.PALETTE) config.swatch.colorArgb else null
+            "ANALOG_MAIN" -> config.analogFaceColor
             else -> config.digitalHourColor
         } ?: WidgetColorSwatch.BLUE.colorArgb
 
@@ -753,16 +753,7 @@ private fun DigitalControls(
                     "DAY" -> onUpdate(config.copy(digitalDayColor = argb))
                     "DATE" -> onUpdate(config.copy(digitalDateColor = argb))
                     "ANALOG_SECOND" -> onUpdate(config.copy(analogSecondHandColor = argb))
-                    "ANALOG_MAIN" -> {
-                        val closestSwatch = WidgetColorSwatch.entries.firstOrNull { it.colorArgb == argb } ?: WidgetColorSwatch.BLUE
-                        onUpdate(
-                            config.copy(
-                                colour = ColourSource.PALETTE,
-                                swatch = closestSwatch,
-                                analogPrimaryColor = argb,
-                            ),
-                        )
-                    }
+                    "ANALOG_MAIN" -> onUpdate(config.copy(analogFaceColor = argb))
                 }
             },
         )
@@ -1072,24 +1063,10 @@ private fun AnalogControls(
             onSelect = { onUpdate(config.copy(faceFill = it)) },
         )
 
-        val currentAnalogMainColor = config.analogPrimaryColor
-            ?: if (config.colour == ColourSource.PALETTE) config.swatch.colorArgb else null
-
-        SectionHeader("Colour")
+        SectionHeader("Background colour")
         ColourSwatchRowWithCustom(
-            selectedColor = currentAnalogMainColor,
-            onSelectColor = { colorArgb ->
-                if (colorArgb != null) {
-                    val swatch = WidgetColorSwatch.entries.firstOrNull { it.colorArgb == colorArgb } ?: WidgetColorSwatch.BLUE
-                    onUpdate(
-                        config.copy(
-                            colour = ColourSource.PALETTE,
-                            swatch = swatch,
-                            analogPrimaryColor = colorArgb,
-                        ),
-                    )
-                }
-            },
+            selectedColor = config.analogFaceColor,
+            onSelectColor = { onUpdate(config.copy(analogFaceColor = it)) },
             onOpenCustomPicker = { showCustomColorPickerTarget = "ANALOG_MAIN" },
         )
 
@@ -1237,7 +1214,7 @@ private fun AnalogControls(
     if (showCustomColorPickerTarget != null) {
         val initialColorLong = when (showCustomColorPickerTarget) {
             "ANALOG_SECOND" -> config.analogSecondHandColor
-            "ANALOG_MAIN" -> config.analogPrimaryColor ?: if (config.colour == ColourSource.PALETTE) config.swatch.colorArgb else null
+            "ANALOG_MAIN" -> config.analogFaceColor
             else -> config.analogPrimaryColor ?: if (config.colour == ColourSource.PALETTE) config.swatch.colorArgb else null
         } ?: WidgetColorSwatch.BLUE.colorArgb
 
@@ -1284,7 +1261,7 @@ private fun DigitalPreview(
     val wallpaper = rememberWallpaperBitmap()
     val isDark = isSystemInDarkTheme()
 
-    val colours = remember(settings, config.colour, config.palette, config.swatch) {
+    val colours = remember(settings, config) {
         WidgetColours.resolve(context, config, settings)
     }
 
@@ -1564,7 +1541,7 @@ private fun DigitalPreview(
 }
 
 @Composable
-private fun AnalogPreview(
+internal fun AnalogPreview(
     config: WidgetConfig,
     settings: ClockSettings,
     modifier: Modifier = Modifier,
@@ -1651,7 +1628,7 @@ private fun HandCarousel(
         optionLabel = { it.label },
         onSelect = onSelect,
     ) { style, selected ->
-        val colours = remember(settings, config.colour, config.palette, config.swatch) {
+        val colours = remember(settings, config) {
             WidgetColours.resolve(context, config, settings)
         }
         val ink = if (selected) MaterialTheme.colorScheme.onPrimary.toArgb() else colour(colours)

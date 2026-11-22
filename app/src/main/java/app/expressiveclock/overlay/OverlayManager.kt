@@ -13,6 +13,9 @@ import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
 import android.util.Log
+import android.view.View
+import android.view.WindowInsets
+import android.app.KeyguardManager
 import android.view.Gravity
 import android.view.MotionEvent
 import android.view.WindowManager
@@ -76,6 +79,56 @@ import kotlin.math.roundToInt
  * - Layer 2 (Interaction Window): Bounded window matching activeIslandBounds for precise touch interaction.
  */
 object OverlayManager {
+
+    private var hiddenForFullscreen = false
+    private val fullscreenHandler = Handler(Looper.getMainLooper())
+    private var pendingFullscreenUpdate: Runnable? = null
+    // Non-fitting accessibility windows can omit bar-change dispatches. Sample only
+    // while an island window exists; no screen content or package names are inspected.
+    private val fullscreenSampler = object : Runnable {
+        override fun run() {
+            val view = renderComposeView ?: return
+            if (Build.VERSION.SDK_INT >= 30) view.rootWindowInsets?.let(::updateFullscreenVisibility)
+            fullscreenHandler.postDelayed(this, 500)
+        }
+    }
+
+    fun onForegroundWindowChanged() {
+        if (Build.VERSION.SDK_INT >= 30) renderComposeView?.rootWindowInsets?.let(::updateFullscreenVisibility)
+    }
+
+
+    private fun updateFullscreenVisibility(insets: WindowInsets) {
+        // Visibility, not inset size or window bounds, distinguishes immersive from edge-to-edge.
+        // Older Android/OEM windows without reliable bar information keep the island visible.
+        if (Build.VERSION.SDK_INT < 30) return
+        val hide = fullscreenCandidate(insets)
+        pendingFullscreenUpdate?.let(fullscreenHandler::removeCallbacks)
+        pendingFullscreenUpdate = Runnable {
+            if (hiddenForFullscreen != hide) {
+                Log.d("OverlayManager", "Fullscreen suppression=$hide")
+                hiddenForFullscreen = hide
+                applyFullscreenVisibility()
+            }
+        }.also { fullscreenHandler.postDelayed(it, 160) }
+    }
+
+    @androidx.annotation.RequiresApi(30)
+    private fun fullscreenCandidate(insets: WindowInsets): Boolean = runCatching {
+        val observedInsets = windowManager?.currentWindowMetrics?.windowInsets ?: insets
+        val knownStatusBar = observedInsets.getInsetsIgnoringVisibility(WindowInsets.Type.statusBars()).top > 0
+        val locked = appContext?.getSystemService(KeyguardManager::class.java)?.isKeyguardLocked != false
+        shouldHideIslandForFullscreen(
+            if (knownStatusBar) observedInsets.isVisible(WindowInsets.Type.statusBars()) else null,
+            if (knownStatusBar) observedInsets.isVisible(WindowInsets.Type.navigationBars()) else null,
+            locked, isCalibrationPreviewing)
+    }.getOrDefault(false)
+
+    private fun applyFullscreenVisibility() {
+        val visibility = if (hiddenForFullscreen && !isCalibrationPreviewing) View.INVISIBLE else View.VISIBLE
+        renderComposeView?.visibility = visibility
+        interactionComposeView?.visibility = visibility
+    }
 
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
     private var windowManager: WindowManager? = null
@@ -332,15 +385,43 @@ object OverlayManager {
                 setViewTreeViewModelStoreOwner(viewModelStoreOwner)
                 setViewTreeSavedStateRegistryOwner(lifecycleOwner)
 
+                setOnApplyWindowInsetsListener { _, insets ->
+                    updateFullscreenVisibility(insets)
+                    insets
+                }
                 setContent {
                     PersistentOverlayContent(context, currentGen)
                 }
             }
+            hiddenForFullscreen = if (Build.VERSION.SDK_INT >= 30)
+                fullscreenCandidate(wm.currentWindowMetrics.windowInsets) else false
             renderComposeView = renderView
+            applyFullscreenVisibility()
 
             val renderParams = createRenderParams() ?: return
             val addResult = runCatching {
                 wm.addView(renderView, renderParams)
+                // Compose installs its own inset listener during attachment. Observe after
+                // that setup, returning the original insets to preserve Compose's handling.
+                renderView.post {
+                    if (renderComposeView === renderView) {
+                        renderView.setOnApplyWindowInsetsListener { _, insets ->
+                            updateFullscreenVisibility(insets)
+                            insets
+                        }
+                        if (Build.VERSION.SDK_INT >= 30) renderView.setWindowInsetsAnimationCallback(
+                            object : android.view.WindowInsetsAnimation.Callback(DISPATCH_MODE_CONTINUE_ON_SUBTREE) {
+                                override fun onProgress(insets: WindowInsets, runningAnimations: MutableList<android.view.WindowInsetsAnimation>): WindowInsets {
+                                    updateFullscreenVisibility(insets)
+                                    return insets
+                                }
+                            })
+                        renderView.rootWindowInsets?.let(::updateFullscreenVisibility)
+                        renderView.requestApplyInsets()
+                        fullscreenHandler.removeCallbacks(fullscreenSampler)
+                        fullscreenHandler.post(fullscreenSampler)
+                    }
+                }
                 isOverlayAttached = true
                 overlayWindowManager = wm
             }
@@ -356,6 +437,8 @@ object OverlayManager {
         } else if (!isCalibrationPreviewing) {
             updateWindowParams()
         }
+
+        applyFullscreenVisibility()
 
         // Layer 2: Interaction Window (Bounded, touchable)
         if (isOverlayAttached && !isCalibrationPreviewing) {
@@ -407,6 +490,7 @@ object OverlayManager {
                 }
             }
             interactionComposeView = view
+            applyFullscreenVisibility()
 
             val addResult = runCatching {
                 attachedWm.addView(view, params)
@@ -610,6 +694,8 @@ object OverlayManager {
     }
 
     private fun removeOverlayNow(force: Boolean = false) {
+        fullscreenHandler.removeCallbacks(fullscreenSampler)
+        pendingFullscreenUpdate?.let(fullscreenHandler::removeCallbacks)
         if (isOverlayBeingRemoved) return
 
         if (overlayIsExitingState && !force) {

@@ -1,0 +1,10 @@
+What's new:
+• Tap the World Clock to switch between analogue and digital, and choose your default in Settings.
+• Dynamic Island hides during detected fullscreen experiences on Android 11+.
+• Fixed analogue widget background colours.
+• Clearer completed Timer dismissal.
+• Launcher name shortened to Clock.
+• Full-word alarm countdown confirmations with smoother transitions.
+• Refined World Clock spacing and animations.
+
+Enjoy!

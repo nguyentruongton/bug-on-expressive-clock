@@ -28,7 +28,10 @@ data class AlarmSettings(
     val weekStart: WeekStart = WeekStart.SYSTEM,
 )
 
+enum class WorldClockStyle(val label: String) { ANALOGUE("Analogue"), DIGITAL("Digital") }
+
 data class WorldClockSettings(
+    val defaultStyle: WorldClockStyle = WorldClockStyle.ANALOGUE,
     val deleteTutorialShown: Boolean = false,
     val showSeconds: Boolean = false,
     val hourFormat: HourFormat = HourFormat.SYSTEM,

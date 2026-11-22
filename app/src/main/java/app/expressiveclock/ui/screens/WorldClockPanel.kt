@@ -138,6 +138,7 @@ fun WorldClockPanel(
     val presentation = LocalWorldClockPresentation.current
     val state = presentation.grid
     var collapse by presentation.collapse
+    val toggleScope = rememberCoroutineScope()
     val density = LocalDensity.current
     var snapJob by remember { mutableStateOf<Job?>(null) }
     suspend fun settle(velocity: Float = 0f) = coroutineScope {
@@ -196,7 +197,13 @@ fun WorldClockPanel(
                 .then(if (flatPortrait) Modifier else Modifier.clip(RoundedCornerShape(28.dp)))
                 .nestedScroll(connection)
                 .padding(horizontal = if (flatPortrait) 0.dp else 12.dp)) {
-                WorldClockHeader(selected, now, dialSize, collapse, detailsHeight)
+                Box(Modifier.clickable(interactionSource = remember { androidx.compose.foundation.interaction.MutableInteractionSource() }, indication = null, onClickLabel = if (collapse < .5f) "Show digital clock" else "Show analogue clock") {
+                    snapJob?.cancel()
+                    snapJob = toggleScope.launch {
+                        val target = if (collapse < .5f) 1f else 0f
+                        animate(collapse, target, animationSpec = tween(260, easing = FastOutSlowInEasing)) { value, _ -> collapse = value }
+                    }
+                }) { WorldClockHeader(selected, now, dialSize, collapse, detailsHeight) }
                 SavedLocationGrid(
                     cities = cities, localCity = localCity, onShowLocalTime = onShowLocalTime,
                     selectedZoneId = selectedZoneId, nowUtcMillis = now, onSelectCity = onSelectCity,

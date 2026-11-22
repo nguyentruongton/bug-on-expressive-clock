@@ -63,7 +63,7 @@ object ClockWidgetRenderer {
      * content box: adding padding of our own would shrink the face away from the edges, which is
      * the one thing the shape fitting exists to prevent.
      */
-    private fun build(
+    internal fun build(
         context: Context,
         config: WidgetConfig,
         settings: app.expressiveclock.data.ClockSettings,

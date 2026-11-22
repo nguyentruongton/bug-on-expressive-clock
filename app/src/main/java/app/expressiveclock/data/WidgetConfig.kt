@@ -66,6 +66,7 @@ data class WidgetConfig(
     val palette: Palette = Palette.CONCEPT,
     val swatch: WidgetColorSwatch = WidgetColorSwatch.BLUE,
     val analogPrimaryColor: Long? = null,
+    val analogFaceColor: Long? = null,
 )
 
 enum class WidgetType(val label: String) {

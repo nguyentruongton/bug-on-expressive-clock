@@ -75,10 +75,16 @@ object WidgetColours {
         //
         // The minor indices drop to `onSurfaceVariant` so a dial with four numerals and eight dots
         // reads as two levels rather than twelve equal marks.
+        val customFace = config.analogFaceColor?.toInt()?.takeIf {
+            config.type == app.expressiveclock.data.WidgetType.ANALOG && config.faceFill == app.expressiveclock.data.FaceFill.CONTAINER
+        }
+        val faceInk = customFace?.let {
+            if (androidx.core.graphics.ColorUtils.calculateLuminance(it) < .179) android.graphics.Color.WHITE else android.graphics.Color.BLACK
+        }
         return FaceRenderer.Colours(
-            face = scheme.surfaceContainerHigh.toArgb(),
-            onFace = scheme.onSurface.toArgb(),
-            minor = scheme.onSurfaceVariant.toArgb(),
+            face = customFace ?: scheme.surfaceContainerHigh.toArgb(),
+            onFace = faceInk ?: scheme.onSurface.toArgb(),
+            minor = faceInk?.let { androidx.core.graphics.ColorUtils.setAlphaComponent(it, 185) } ?: scheme.onSurfaceVariant.toArgb(),
             outline = scheme.outlineVariant.toArgb(),
             accent = primaryAccent,
             hourHand = primaryAccent,

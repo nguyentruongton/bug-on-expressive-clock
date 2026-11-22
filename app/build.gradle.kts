@@ -14,8 +14,8 @@ android {
         applicationId = "app.expressiveclock"
         minSdk = 26
         targetSdk = 36
-        versionCode = 15
-        versionName = "0.1.12"
+        versionCode = 16
+        versionName = "0.1.13"
     }
 
     // Configure lazily enough for debug/tests/lint to work in contributor checkouts.
