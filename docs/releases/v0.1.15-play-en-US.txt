@@ -1,0 +1,1 @@
+Improved alarm service compatibility and reliability on newer Android versions.

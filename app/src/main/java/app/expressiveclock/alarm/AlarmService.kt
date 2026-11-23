@@ -3,7 +3,6 @@ package app.expressiveclock.alarm
 import android.app.Service
 import android.content.Context
 import android.content.Intent
-import android.content.pm.ServiceInfo
 import android.media.AudioAttributes
 import android.os.Build
 import android.os.IBinder
@@ -124,11 +123,9 @@ class AlarmService : Service() {
     }
 
     private fun foreground(n: android.app.Notification) {
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-            startForeground(Notifications.ID_RINGING, n, ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PLAYBACK)
-        } else {
-            startForeground(Notifications.ID_RINGING, n)
-        }
+        // The two-argument API uses the type declared in the manifest on Android 10+.
+        // It also avoids a shared R8 API-29 outline with unrelated widget/boot helpers.
+        startForeground(Notifications.ID_RINGING, n)
     }
 
     private fun vibrate(pattern: LongArray) {
