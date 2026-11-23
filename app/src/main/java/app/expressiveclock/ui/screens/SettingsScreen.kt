@@ -165,6 +165,7 @@ import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.draw.drawWithContent
 import androidx.compose.ui.graphics.vector.ImageVector
+import app.expressiveclock.allowClockCalibrationRotation
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.font.FontWeight
@@ -474,6 +475,30 @@ fun SettingsScreen(
             }
 
             if (category == null || category == SettingsCategory.MISCELLANEOUS) SettingsCard(title = "MISCELLANEOUS") {
+                var showAppName by remember { mutableStateOf(false) }
+                var shortName by remember { mutableStateOf(app.expressiveclock.LauncherName.isShort(context)) }
+                SettingsNavigateRow(
+                    icon = Icons.Outlined.Home,
+                    title = "App Name",
+                    subtitle = if (shortName) "Clock" else "Expressive Clock",
+                    onClick = {
+                        shortName = app.expressiveclock.LauncherName.isShort(context)
+                        showAppName = true
+                    },
+                )
+                if (showAppName) AppIconNameDialog(
+                    activeShortName = shortName,
+                    onDismiss = { showAppName = false },
+                    onApply = { selectedShortName ->
+                        showAppName = false
+                        if (selectedShortName != shortName) {
+                            app.expressiveclock.LauncherName.select(context, selectedShortName)
+                            shortName = selectedShortName
+                        }
+                    },
+                )
+                SettingsDivider()
+
                 SettingsNavigateRow(
                     icon = Icons.Outlined.Home,
                     title = "Default startup page",
@@ -937,17 +962,13 @@ private fun OverlayCalibrationDialog(
 ) {
     val context = LocalContext.current
     // Only the calibration flow may rotate on a portrait-locked slab. Both its
-    // overview and editor share this lifetime; leaving restores the prior policy.
+    // overview and editor share this lifetime; leaving restores the current display policy.
     DisposableEffect(context) {
         var host: android.content.Context? = context
         while (host is android.content.ContextWrapper && host !is Activity) host = host.baseContext
         val activity = host as? Activity
-        val previous = activity?.requestedOrientation
-        val temporarilyUnlock = previous == android.content.pm.ActivityInfo.SCREEN_ORIENTATION_PORTRAIT
-        if (temporarilyUnlock) activity?.requestedOrientation = android.content.pm.ActivityInfo.SCREEN_ORIENTATION_FULL_SENSOR
-        onDispose {
-            if (temporarilyUnlock && previous != null) activity?.requestedOrientation = previous
-        }
+        val restoreOrientation = activity?.allowClockCalibrationRotation()
+        onDispose { restoreOrientation?.invoke() }
     }
     val display by IslandDisplayMonitor.state.collectAsState()
     var selected by remember { mutableStateOf<IslandProfile?>(null) }

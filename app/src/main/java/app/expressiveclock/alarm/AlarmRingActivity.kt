@@ -1,5 +1,6 @@
 package app.expressiveclock.alarm
 
+import app.expressiveclock.applyClockOrientationPolicy
 import android.app.PendingIntent
 import android.content.Context
 import android.content.Intent
@@ -10,6 +11,10 @@ import android.view.WindowManager
 import androidx.activity.ComponentActivity
 import androidx.activity.OnBackPressedCallback
 import androidx.activity.compose.setContent
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.foundation.layout.BoxWithConstraints
+import androidx.compose.foundation.layout.safeDrawingPadding
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Spacer
@@ -22,6 +27,8 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
@@ -54,8 +61,19 @@ import java.time.LocalTime
  */
 class AlarmRingActivity : ComponentActivity() {
 
+    override fun onConfigurationChanged(newConfig: android.content.res.Configuration) {
+        super.onConfigurationChanged(newConfig)
+        applyClockOrientationPolicy()
+    }
+
+    override fun onResume() {
+        super.onResume()
+        applyClockOrientationPolicy()
+    }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        applyClockOrientationPolicy()
         window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
 
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O_MR1) {
@@ -140,34 +158,42 @@ private fun Ringing(
         "%02d:%02d".format((time.hour % 12).takeIf { it != 0 } ?: 12, time.minute)
     }
 
+    BoxWithConstraints(Modifier.fillMaxSize().safeDrawingPadding()) {
+    val compact = maxHeight < 600.dp
     Column(
-        modifier = Modifier.fillMaxSize().padding(horizontal = 24.dp, vertical = 40.dp),
+        modifier = Modifier.fillMaxSize().padding(horizontal = 24.dp, vertical = if (compact) 12.dp else 40.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.Center,
     ) {
+        Column(
+            Modifier.weight(1f).fillMaxWidth().verticalScroll(rememberScrollState()),
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.Center,
+        ) {
         Text(
             label.ifBlank { "Alarm" },
             style = MaterialTheme.typography.headlineMediumEmphasized,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
-        Spacer(Modifier.height(28.dp))
+        Spacer(Modifier.height(if (compact) 8.dp else 28.dp))
         // The same ultra-condensed face the grid uses, at the size a room-across glance needs.
         Numerals(
             text = formattedTime,
-            capHeight = 132.dp,
+            capHeight = if (compact) 64.dp else 132.dp,
             color = MaterialTheme.colorScheme.primary,
             width = ClockFace.CONDENSED,
             weight = ClockFace.WEIGHT_ON,
             tracking = ClockFace.CONDENSED_TRACKING,
         )
-        Spacer(Modifier.height(56.dp))
+        }
+        Spacer(Modifier.height(if (compact) 12.dp else 56.dp))
         WidePill(
             text = "Dismiss",
             onClick = onDismiss,
             container = MaterialTheme.colorScheme.tertiaryContainer,
             content = MaterialTheme.colorScheme.onTertiaryContainer,
-            height = 96.dp,
-            modifier = Modifier.fillMaxWidth(),
+            height = if (compact) 56.dp else 96.dp,
+            modifier = Modifier.fillMaxWidth().semantics { contentDescription = "Dismiss" },
         )
         Spacer(Modifier.height(12.dp))
         WidePill(
@@ -175,8 +201,9 @@ private fun Ringing(
             onClick = onSnooze,
             outlined = true,
             content = MaterialTheme.colorScheme.onSurface,
-            height = 72.dp,
-            modifier = Modifier.fillMaxWidth(),
+            height = if (compact) 56.dp else 72.dp,
+            modifier = Modifier.fillMaxWidth().semantics { contentDescription = "Snooze $snoozeMinutes min" },
         )
     }
+}
 }

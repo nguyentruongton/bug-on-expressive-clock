@@ -40,11 +40,16 @@ class IslandProfileTest {
         assertEquals(420f, islandExpandedWidth(883f, 852f), 0f)
         assertTrue(islandExpandedTop(200f, 240f, 168f) + 168f <= 232f)
     }
-    @Test fun onlySlabPhonesLockTheirActivity() {
-        assertTrue(app.expressiveclock.lockSlabPortrait(false, 411))
-        assertFalse(app.expressiveclock.lockSlabPortrait(true, 443))
-        assertFalse(app.expressiveclock.lockSlabPortrait(true, 840))
-        assertFalse(app.expressiveclock.lockSlabPortrait(false, 800))
+    @Test fun coverDisplaysLockAndInnerDisplaysReleaseOrientation() {
+        val portrait = android.content.pm.ActivityInfo.SCREEN_ORIENTATION_PORTRAIT
+        val system = android.content.pm.ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED
+        assertEquals(portrait, app.expressiveclock.activityOrientation(411))
+        assertEquals(portrait, app.expressiveclock.activityOrientation(443))
+        assertEquals(portrait, app.expressiveclock.activityOrientation(599))
+        assertEquals(system, app.expressiveclock.activityOrientation(600))
+        assertEquals(system, app.expressiveclock.activityOrientation(840))
+        // Folding back must restore the lock; there is no retained hardware exemption.
+        assertEquals(portrait, app.expressiveclock.activityOrientation(443))
     }
     @Test fun slabHasNoFoldProfilesAndRotationSelectsEachFoldProfile() {
         assertNull(islandProfile(false, false, 1080, 2340))

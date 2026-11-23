@@ -52,6 +52,8 @@ fun AlarmEditSheet(
         onDismissRequest = onDismiss,
         sheetState = sheetState,
         shape = AlarmSheetShape,
+        // Keep the large alarm numerals visually subordinate to the editor.
+        scrimColor = androidx.compose.material3.MaterialTheme.colorScheme.scrim.copy(alpha = 0.6f),
         dragHandle = { AlarmEditorDragHandle() },
         containerColor = androidx.compose.material3.MaterialTheme.colorScheme.surface,
     ) {

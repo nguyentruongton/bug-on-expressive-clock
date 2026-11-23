@@ -27,7 +27,13 @@ import kotlinx.coroutines.flow.map
 import org.json.JSONArray
 import org.json.JSONObject
 
-private val Context.prefs: DataStore<Preferences> by preferencesDataStore("clock")
+private val Context.prefsDelegate: DataStore<Preferences> by preferencesDataStore("clock")
+
+private suspend fun Context.unlockedPrefs(): DataStore<Preferences> {
+    credentialUnlocks().first { it }
+    check(credentialStorageAvailable())
+    return prefsDelegate
+}
 private const val TIMER_PRESET_SCHEMA_VERSION = 3
 
 /**
@@ -47,16 +53,21 @@ private const val TIMER_PRESET_SCHEMA_VERSION = 3
  * an alarm that does not ring and an alarm list that cannot be parsed.
  */
 class ClockStore(private val context: Context) {
+    // Do not initialize DataStore from Application/overlay collectors during Direct Boot.
+    private val preferences = afterCredentialUnlock(context.credentialUnlocks()) {
+        check(context.credentialStorageAvailable())
+        context.prefsDelegate.data
+    }
 
-    val settings: Flow<ClockSettings> = context.prefs.data.map { it.toSettings() }
-    val alarms: Flow<List<Alarm>> = context.prefs.data.map { p ->
+    val settings: Flow<ClockSettings> = preferences.map { it.toSettings() }
+    val alarms: Flow<List<Alarm>> = preferences.map { p ->
         p[KEY_ALARMS]?.let(::parseAlarms) ?: SEED_ALARMS
     }
-    val cities: Flow<List<WorldCity>> = context.prefs.data.map { p ->
+    val cities: Flow<List<WorldCity>> = preferences.map { p ->
         p[KEY_CITIES]?.let(::parseCities) ?: SEED_CITIES
     }
-    val timer: Flow<ClockTimer?> = context.prefs.data.map { p -> p[KEY_TIMER]?.let(::parseTimer) }
-    val stopwatch: Flow<Stopwatch> = context.prefs.data.map { p ->
+    val timer: Flow<ClockTimer?> = preferences.map { p -> p[KEY_TIMER]?.let(::parseTimer) }
+    val stopwatch: Flow<Stopwatch> = preferences.map { p ->
         p[KEY_STOPWATCH]?.let(::parseStopwatch) ?: Stopwatch()
     }
 
@@ -66,12 +77,12 @@ class ClockStore(private val context: Context) {
     suspend fun timerNow(): ClockTimer? = timer.first()
 
     suspend fun putAlarms(list: List<Alarm>) {
-        context.prefs.edit { it[KEY_ALARMS] = encodeAlarms(list) }
+        context.unlockedPrefs().edit { it[KEY_ALARMS] = encodeAlarms(list) }
     }
 
     suspend fun updateAlarms(transform: (List<Alarm>) -> List<Alarm>): List<Alarm> {
         var result = emptyList<Alarm>()
-        context.prefs.edit { p ->
+        context.unlockedPrefs().edit { p ->
             result = transform(p[KEY_ALARMS]?.let(::parseAlarms) ?: SEED_ALARMS)
             p[KEY_ALARMS] = encodeAlarms(result)
         }
@@ -79,28 +90,28 @@ class ClockStore(private val context: Context) {
     }
 
     suspend fun putCities(list: List<WorldCity>) {
-        context.prefs.edit { it[KEY_CITIES] = encodeCities(list) }
+        context.unlockedPrefs().edit { it[KEY_CITIES] = encodeCities(list) }
     }
 
     suspend fun updateCities(transform: (List<WorldCity>) -> List<WorldCity>) {
-        context.prefs.edit { p ->
+        context.unlockedPrefs().edit { p ->
             val current = p[KEY_CITIES]?.let(::parseCities) ?: SEED_CITIES
             p[KEY_CITIES] = encodeCities(transform(current).distinctBy { it.zone.id })
         }
     }
 
     suspend fun putTimer(t: ClockTimer?) {
-        context.prefs.edit { p -> if (t == null) p.remove(KEY_TIMER) else p[KEY_TIMER] = encodeTimer(t) }
+        context.unlockedPrefs().edit { p -> if (t == null) p.remove(KEY_TIMER) else p[KEY_TIMER] = encodeTimer(t) }
     }
 
     suspend fun putStopwatch(s: Stopwatch) {
-        context.prefs.edit { it[KEY_STOPWATCH] = encodeStopwatch(s) }
+        context.unlockedPrefs().edit { it[KEY_STOPWATCH] = encodeStopwatch(s) }
     }
 
     /** Monotonic ids, so a rescheduled alarm never collides with a PendingIntent request code. */
     suspend fun nextId(): Long {
         var out = 0L
-        context.prefs.edit { p ->
+        context.unlockedPrefs().edit { p ->
             out = (p[KEY_NEXT_ID] ?: 100L)
             p[KEY_NEXT_ID] = out + 1
         }
@@ -118,12 +129,12 @@ class ClockStore(private val context: Context) {
      * a `remove` and the orphan sweep a prefix scan.
      */
     fun widgetConfig(id: Int): Flow<WidgetConfig?> =
-        context.prefs.data.map { p -> p[widgetKey(id)]?.let(::parseWidgetConfig) }
+        preferences.map { p -> p[widgetKey(id)]?.let(::parseWidgetConfig) }
 
     suspend fun widgetConfigNow(id: Int): WidgetConfig? = widgetConfig(id).first()
 
     suspend fun putWidgetConfig(id: Int, config: WidgetConfig) {
-        context.prefs.edit { it[widgetKey(id)] = encodeWidgetConfig(config) }
+        context.unlockedPrefs().edit { it[widgetKey(id)] = encodeWidgetConfig(config) }
     }
 
     /**
@@ -131,7 +142,7 @@ class ClockStore(private val context: Context) {
      * `onDeleted`, so one cleanup site covers both and the two cases need not be told apart.
      */
     suspend fun deleteWidgetConfigs(ids: IntArray) {
-        context.prefs.edit { p -> ids.forEach { p.remove(widgetKey(it)) } }
+        context.unlockedPrefs().edit { p -> ids.forEach { p.remove(widgetKey(it)) } }
     }
 
     /**
@@ -140,7 +151,7 @@ class ClockStore(private val context: Context) {
      * wrote.
      */
     suspend fun remapWidgetConfigs(old: IntArray, new: IntArray) {
-        context.prefs.edit { p ->
+        context.unlockedPrefs().edit { p ->
             val carried = old.map { p[widgetKey(it)] }
             old.forEach { p.remove(widgetKey(it)) }
             carried.forEachIndexed { i, value ->
@@ -152,7 +163,7 @@ class ClockStore(private val context: Context) {
     /** Safety net for records whose widget vanished without an `onDeleted` (a restore, a crash). */
     suspend fun sweepWidgetConfigs(liveIds: IntArray) {
         val live = liveIds.toHashSet()
-        context.prefs.edit { p ->
+        context.unlockedPrefs().edit { p ->
             p.asMap().keys
                 .map { it.name }
                 .filter { it.startsWith(WIDGET_PREFIX) }
@@ -162,7 +173,7 @@ class ClockStore(private val context: Context) {
     }
 
     suspend fun update(block: (ClockSettings) -> ClockSettings) {
-        context.prefs.edit { p -> p.writeSettings(block(p.toSettings())) }
+        context.unlockedPrefs().edit { p -> p.writeSettings(block(p.toSettings())) }
     }
 
     private companion object {

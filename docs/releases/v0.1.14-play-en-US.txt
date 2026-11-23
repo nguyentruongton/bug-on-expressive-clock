@@ -1,0 +1,5 @@
+Improved alarm reliability and recovery after restarting your phone.
+Fixed alarm-screen layout and orientation, with accessible Snooze and Dismiss controls.
+Choose Expressive Clock or Clock as your app icon name in Settings.
+Improved alarm editing and folded-device behavior.
+General fixes and stability improvements.

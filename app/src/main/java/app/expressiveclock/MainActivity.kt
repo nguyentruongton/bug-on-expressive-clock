@@ -25,13 +25,20 @@ class MainActivity : ComponentActivity() {
     private var startTab by mutableStateOf<String?>(null)
     private var navigationRequestId by mutableLongStateOf(0L)
 
+    override fun onConfigurationChanged(newConfig: android.content.res.Configuration) {
+        super.onConfigurationChanged(newConfig)
+        applyClockOrientationPolicy()
+    }
+
+    override fun onResume() {
+        super.onResume()
+        applyClockOrientationPolicy()
+    }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         installSplashScreen()
         super.onCreate(savedInstanceState)
-        val foldable = app.expressiveclock.overlay.IslandDisplayMonitor.state.value.foldable
-        if (lockSlabPortrait(foldable, resources.configuration.smallestScreenWidthDp)) {
-            requestedOrientation = android.content.pm.ActivityInfo.SCREEN_ORIENTATION_PORTRAIT
-        }
+        applyClockOrientationPolicy()
         startTab = intent?.getStringExtra(Notifications.EXTRA_TAB)
         navigationRequestId = savedInstanceState?.getLong("navigationRequestId") ?: 0L
         // Edge-to-edge is enabled inside ClockTheme, where the effective dark/light state is known
@@ -56,5 +63,3 @@ class MainActivity : ComponentActivity() {
         outState.putLong("navigationRequestId", navigationRequestId)
     }
 }
-
-internal fun lockSlabPortrait(foldable: Boolean, smallestWidthDp: Int): Boolean = !foldable && smallestWidthDp < 600
