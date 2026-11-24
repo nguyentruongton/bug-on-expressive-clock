@@ -22,6 +22,9 @@ import app.expressiveclock.core.Lap
 import app.expressiveclock.core.Stopwatch
 import app.expressiveclock.core.TimerState
 import app.expressiveclock.core.WorldCity
+import app.expressiveclock.core.normalizedSchedule
+import app.expressiveclock.core.canEnable
+import app.expressiveclock.core.dateIssue
 import app.expressiveclock.core.preservingDismissal
 import app.expressiveclock.data.ClockSettings
 import app.expressiveclock.data.ClockStore
@@ -143,27 +146,43 @@ class ClockViewModel(app: Application) : AndroidViewModel(app) {
 
     /* ── Alarms ─────────────────────────────────────────────────────────────────────────────── */
 
-    fun toggleAlarm(id: Long, onEnabled: (Alarm) -> Unit = {}) = viewModelScope.launch {
+    fun toggleAlarm(id: Long, onEnabled: (Alarm) -> Unit = {}, onInvalid: (Alarm) -> Unit = {}) = viewModelScope.launch {
+        var invalid: Alarm? = null
         val next = store.updateAlarms { list -> list.map {
-            if (it.id == id) it.copy(enabled = !it.enabled, snoozedUntilMillis = null, skippedOccurrenceMillis = null, skippedOccurrenceDate = null) else it
+            if (it.id != id) it else {
+                val now = java.time.ZonedDateTime.now()
+                val enabling = !it.enabled || (it.hasSpecificDate && it.nextFire(now) == null)
+                if (enabling && !it.canEnable(now)) {
+                    invalid = it
+                    it
+                } else it.copy(enabled = enabling, snoozedUntilMillis = null,
+                    skippedOccurrenceMillis = null, skippedOccurrenceDate = null).normalizedSchedule()
+            }
         } }
+        if (invalid != null) { onInvalid(invalid!!); return@launch }
         next.firstOrNull { it.id == id }?.let { a ->
-            if (a.enabled) {
-                AlarmScheduler.schedule(ctx, a)
-                onEnabled(a)
-            } else AlarmScheduler.cancel(ctx, id)
+            if (a.enabled) { AlarmScheduler.schedule(ctx, a); onEnabled(a) }
+            else AlarmScheduler.cancel(ctx, id)
         }
     }
 
-    /** Insert or replace. A null [Alarm.id] of 0 means "new", which is what the sheet sends. */
-    fun saveAlarm(draft: Alarm, onSaved: (Alarm) -> Unit = {}) = viewModelScope.launch {
+    /** Date validation repeats inside the persistence transaction to cover save/unlock races. */
+    fun saveAlarm(draft: Alarm, onSaved: (Alarm) -> Unit = {}, onInvalid: (Alarm) -> Unit = {}) = viewModelScope.launch {
         val id = if (draft.id == 0L) store.nextId() else draft.id
         var alarm = draft.copy(id = id)
+        var invalid = false
         store.updateAlarms { current ->
-            alarm = draft.copy(id = id).preservingDismissal(current.firstOrNull { it.id == id })
-            (if (current.any { it.id == id }) current.map { if (it.id == id) alarm else it }
-            else current + alarm).sortedWith(compareBy({ it.time.hour }, { it.time.minute }))
+            val proposed = draft.copy(id = id).preservingDismissal(current.firstOrNull { it.id == id })
+            if (draft.enabled && proposed.dateIssue(java.time.ZonedDateTime.now()) != null) {
+                invalid = true
+                current
+            } else {
+                alarm = proposed.normalizedSchedule()
+                (if (current.any { it.id == id }) current.map { if (it.id == id) alarm else it }
+                else current + alarm).sortedWith(compareBy({ it.time.hour }, { it.time.minute }))
+            }
         }
+        if (invalid) { onInvalid(draft); return@launch }
         AlarmScheduler.schedule(ctx, alarm)
         onSaved(alarm)
     }

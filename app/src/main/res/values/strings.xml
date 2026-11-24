@@ -9,4 +9,11 @@
     <string name="analog_widget_description">A clean, expressive analog clock for your home screen.</string>
     <string name="digital_widget_description">A beautiful digital clock for your home screen.</string>
     <string name="accessibility_service_description">Displays active timer and stopwatch controls over system bars and camera cutouts.</string>
+    <string name="alarm_schedule_action">Schedule alarm</string>
+    <string name="alarm_date_cancel">Cancel</string>
+    <string name="alarm_date_done">Done</string>
+    <string name="alarm_date_invalid">Choose a valid date or cancel the scheduled date.</string>
+    <string name="alarm_date_past">Choose a future date or time. This scheduled time has passed.</string>
+    <string name="alarm_date_expired">Date passed</string>
+    <string name="alarm_date_dst">Clocks change on this date. Alarm will ring on %1$s at %2$s.</string>
 </resources>

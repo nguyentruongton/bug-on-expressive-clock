@@ -4,6 +4,7 @@ import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
 import androidx.core.content.ContextCompat
+import app.expressiveclock.core.canDeliverDateOccurrence
 import app.expressiveclock.core.TimerState
 import app.expressiveclock.data.ClockStore
 import kotlinx.coroutines.CoroutineScope
@@ -41,15 +42,21 @@ class AlarmReceiver : BroadcastReceiver() {
         val store = ClockStore(context)
         if (at > System.currentTimeMillis() + 1000) return
         var firing: app.expressiveclock.core.Alarm? = null
+        var expiredDate = false
         val cleared = store.updateAlarms { list -> list.map { alarm ->
             if (alarm.id != id || !alarm.enabled || (at > 0 && !UpcomingAlarm.matches(alarm, at))) alarm
-            else {
+            else if (!alarm.canDeliverDateOccurrence(at, java.time.ZonedDateTime.now())) {
+                expiredDate = true
+                alarm.copy(enabled = false, snoozedUntilMillis = null,
+                    skippedOccurrenceMillis = at.takeIf { it > 0 }, skippedOccurrenceDate = alarm.specificDate)
+            } else {
                 firing = alarm
                 alarm.copy(enabled = !alarm.isOneShot, snoozedUntilMillis = null, skippedOccurrenceMillis = at.takeIf { it > 0 } ?: alarm.skippedOccurrenceMillis,
                     skippedOccurrenceDate = if (at > 0) java.time.Instant.ofEpochMilli(at).atZone(java.time.ZoneId.systemDefault()).toLocalDate()
                         else java.time.LocalDate.now())
             }
         } }
+        if (expiredDate) { AlarmScheduler.cancel(context, id); return }
         val alarm = firing ?: return
         UpcomingAlarm.hide(context,id)
         cleared.firstOrNull { it.id == id }?.let { AlarmScheduler.schedule(context, it) }

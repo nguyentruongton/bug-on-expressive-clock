@@ -1,0 +1,1 @@
+Schedule alarms for specific future dates, with easy switching to repeating weekdays. Enjoy clearer date labels, smoother alarm-card animations, consistent alarm editing on phones and foldables, and improved selection feedback.

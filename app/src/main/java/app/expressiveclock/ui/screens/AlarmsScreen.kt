@@ -125,6 +125,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.em
 import androidx.compose.ui.unit.sp
 import app.expressiveclock.core.Alarm
+import app.expressiveclock.core.dateIssue
 import app.expressiveclock.core.WorldCity
 import app.expressiveclock.ui.glass
 import app.expressiveclock.ui.elasticClickable
@@ -418,6 +419,7 @@ fun AlarmsScreen(
                                     maxTileWidth = if (columns == 1) 220.dp else Dp.Infinity,
                                     order = order,
                                     selected = alarm.id in selectedIds || (widePane && editingAlarm?.id == alarm.id),
+                                    showSelectionTick = alarm.id in selectedIds || editingAlarm?.id == alarm.id,
                                     inSelectionMode = inSelectionMode,
                                     onToggle = { onToggle(alarm.id) },
                                     onEdit = { onEdit(alarm) },
@@ -472,7 +474,14 @@ internal fun InlineAlarmEditorPanel(
     var minute by remember(editingAlarm?.id) { mutableIntStateOf(initialTime.minute) }
     var pm by remember(editingAlarm?.id) { mutableStateOf(initialTime.hour >= 12) }
     var editingHour by remember { mutableStateOf(true) }
-    var days by remember(editingAlarm?.id) { mutableStateOf(editingAlarm?.days ?: emptySet()) }
+    var dayMask by androidx.compose.runtime.saveable.rememberSaveable(editingAlarm?.id) {
+        androidx.compose.runtime.mutableIntStateOf(editingAlarm?.days?.fold(0) { mask, d -> mask or (1 shl d.ordinal) } ?: 0)
+    }
+    val days = DayOfWeek.entries.filter { dayMask and (1 shl it.ordinal) != 0 }.toSet()
+    var dateText by androidx.compose.runtime.saveable.rememberSaveable(editingAlarm?.id) {
+        mutableStateOf(editingAlarm?.specificDate?.toString() ?: editingAlarm?.invalidSpecificDate)
+    }
+    val specificDate = dateText?.let { runCatching { java.time.LocalDate.parse(it) }.getOrNull() }
     var vibrate by remember(editingAlarm?.id) { mutableStateOf(editingAlarm?.vibrate ?: true) }
     var soundUri by remember(editingAlarm?.id) { mutableStateOf(editingAlarm?.soundUri) }
     var label by remember(editingAlarm?.id) { mutableStateOf(editingAlarm?.label ?: "") }
@@ -514,23 +523,30 @@ internal fun InlineAlarmEditorPanel(
             onPmChange = { pm = it },
             onEditingHourChange = { editingHour = it },
             onLabelChange = { label = it },
+            specificDate = specificDate,
+            invalidSpecificDate = dateText != null && specificDate == null,
+            onSpecificDateChange = { date -> dateText = date?.toString(); if (date != null) dayMask = 0 },
             onToggleDay = { day ->
-                days = if (day in days) days - day else days + day
+                dayMask = if (dateText != null) (1 shl day.ordinal) else dayMask xor (1 shl day.ordinal)
+                dateText = null
             },
             onVibrateChange = { vibrate = it },
             onSoundClick = systemSoundPicker,
             onCancel = onCancel,
             onSave = {
                 val base = editingAlarm ?: Alarm(0L, LocalTime.of(hour, minute))
+                val saveHour = if (is24Hour) hour else (hour % 12) + if (pm) 12 else 0
                 val alarmToSave = base.copy(
-                    time = LocalTime.of(hour, minute),
+                    time = LocalTime.of(saveHour, minute),
                     days = days,
+                    specificDate = specificDate,
+                    invalidSpecificDate = dateText?.takeIf { specificDate == null },
                     vibrate = vibrate,
                     soundUri = soundUri,
                     label = label,
                     enabled = true,
                 )
-                onSave(alarmToSave)
+                if (alarmToSave.dateIssue(java.time.ZonedDateTime.now()) == null) onSave(alarmToSave)
             },
             onDelete = {
                 if (editingAlarm != null && editingAlarm.id != 0L) {
@@ -851,6 +867,7 @@ private fun AlarmTile(
     alarm: Alarm,
     order: List<DayOfWeek>,
     selected: Boolean = false,
+    showSelectionTick: Boolean = selected,
     inSelectionMode: Boolean = false,
     itemModifier: Modifier = Modifier,
     maxTileWidth: Dp = Dp.Infinity,
@@ -861,7 +878,9 @@ private fun AlarmTile(
 ) {
     val view = LocalView.current
     val windowExpanded = LocalAppWindowSizeInfo.current.isExpanded
-    val armed = alarm.enabled
+    val dateClock by app.expressiveclock.ui.rememberWallTicker(60_000L)
+    val dateNow = java.time.Instant.ofEpochMilli(dateClock).atZone(java.time.ZoneId.systemDefault())
+    val armed = alarm.enabled && (!alarm.hasSpecificDate || alarm.nextFire(dateNow) != null)
     val weightTarget = if (armed) ClockFace.WEIGHT_ON else ClockFace.WEIGHT_OFF
     val animatedWeight by androidx.compose.animation.core.animateIntAsState(
         targetValue = weightTarget,
@@ -958,7 +977,7 @@ private fun AlarmTile(
             )
             .clearAndSetSemantics {
                 contentDescription = buildString {
-                    if (selected) append("Selected, ")
+                    if (selected || showSelectionTick) append("Selected, ")
                     append("%d:%02d %s".format(hour12, alarm.time.minute, meridiem))
                     if (alarm.label.isNotBlank()) append(", ${alarm.label}")
                     append(", ${alarm.repeatLabel()}")
@@ -968,10 +987,21 @@ private fun AlarmTile(
             },
     ) {
             Box(Modifier.fillMaxSize()) {
-                if (selected) {
+                AnimatedVisibility(
+                    visible = showSelectionTick,
+                    modifier = Modifier.padding(start = 12.dp, top = 12.dp),
+                    enter = scaleIn(
+                        initialScale = .6f,
+                        animationSpec = spring(dampingRatio = .55f, stiffness = 700f),
+                    ) + fadeIn(tween(100)),
+                    exit = scaleOut(
+                        targetScale = .7f,
+                        animationSpec = tween(150, easing = FastOutSlowInEasing),
+                    ) + fadeOut(tween(120)),
+                    label = "Alarm selection tick",
+                ) {
                     Box(
                         modifier = Modifier
-                            .padding(start = 12.dp, top = 12.dp)
                             .size(22.dp)
                             .clip(CircleShape)
                             .background(MaterialTheme.colorScheme.primary),
@@ -1033,7 +1063,50 @@ private fun AlarmTile(
                         verticalAlignment = Alignment.CenterVertically,
                         horizontalArrangement = Arrangement.SpaceBetween,
                     ) {
-                        DayLetters(alarm, order, animatedInk, (tileWidth - inset * 2 - 60.dp).coerceIn(1.dp, DAY_BLOCK_DP.dp))
+                        val scheduleSlidePx = with(LocalDensity.current) { 12.dp.roundToPx() }
+                        AnimatedContent(
+                            targetState = alarm to armed,
+                            // Only a change of mode animates; edits within a mode update in place.
+                            contentKey = { it.first.hasSpecificDate },
+                            contentAlignment = Alignment.CenterStart,
+                            modifier = Modifier.weight(1f)
+                                .height((SWITCH_ROW_VISIBLE_DP + SWITCH_TOUCH_INSET_DP).dp)
+                                .clipToBounds(),
+                            transitionSpec = {
+                                val direction = if (targetState.first.hasSpecificDate) 1 else -1
+                                ((fadeIn(tween(220, easing = FastOutSlowInEasing)) +
+                                    slideInVertically(
+                                        // A short, expressive spring: about 2.5 dp of overshoot
+                                        // from 12 dp of travel, settling in roughly 300 ms.
+                                        spring(dampingRatio = .45f, stiffness = 900f,
+                                            visibilityThreshold = androidx.compose.ui.unit.IntOffset(1, 1)),
+                                    ) { direction * scheduleSlidePx })
+                                    .togetherWith(fadeOut(tween(180, easing = FastOutSlowInEasing)) +
+                                        slideOutVertically(
+                                            spring(dampingRatio = 1f, stiffness = 900f,
+                                                visibilityThreshold = androidx.compose.ui.unit.IntOffset(1, 1)),
+                                        ) { -direction * scheduleSlidePx }))
+                                    // The switch row already reserves 48 dp. Never animate its size.
+                                    .using(null)
+                            },
+                            label = "Alarm schedule label",
+                        ) { (displayedAlarm, displayedArmed) ->
+                            // Read the transition's snapshot so an outgoing weekday run keeps its
+                            // original selection, including when a transition is interrupted.
+                            // Loosen the animated slot's minimum width for the custom weekday
+                            // layout, keeping its ink at the original leading inset on wide cards.
+                            Box(Modifier.fillMaxWidth(), contentAlignment = Alignment.CenterStart) {
+                                if (displayedAlarm.hasSpecificDate) {
+                                    ScheduledDateLabel(
+                                        alarm = displayedAlarm,
+                                        armed = displayedArmed,
+                                        expired = !displayedArmed && displayedAlarm.specificDate != null && displayedAlarm.dateIssue(dateNow) != null,
+                                        ink = animatedInk,
+                                        weekdayWidth = (tileWidth - inset * 2 - 60.dp).coerceIn(1.dp, DAY_BLOCK_DP.dp),
+                                    )
+                                } else DayLetters(displayedAlarm, order, animatedInk, (tileWidth - inset * 2 - 60.dp).coerceIn(1.dp, DAY_BLOCK_DP.dp))
+                            }
+                        }
                         Switch(
                             checked = armed,
                             modifier = Modifier.graphicsLayer {
@@ -1381,6 +1454,43 @@ private fun DayLetters(alarm: Alarm, order: List<DayOfWeek>, ink: Color, blockWi
     }
 
     StretchedCaps(text = text, style = style, capHeight = if (blockWidth < 80.dp) 19.dp else DAY_CAP_DP.dp, scaleX = scaleX)
+}
+
+/** Uses the weekday face and cap height; fits the entire date without ellipsis. */
+@Composable
+private fun ScheduledDateLabel(alarm: Alarm, armed: Boolean, expired: Boolean, ink: Color, weekdayWidth: Dp) {
+    val locale = androidx.compose.ui.platform.LocalConfiguration.current.locales[0]
+    val text = remember(alarm.specificDate, alarm.invalidSpecificDate, locale, expired) {
+        val date = alarm.specificDate?.format(java.time.format.DateTimeFormatter.ofPattern(
+            android.text.format.DateFormat.getBestDateTimePattern(locale, "dMMMyyyy"), locale))
+            ?: alarm.repeatLabel()
+        date.uppercase(locale)
+    }
+    val suffix = if (expired) " · " + androidx.compose.ui.res.stringResource(app.expressiveclock.R.string.alarm_date_expired).uppercase(locale) else ""
+    val weight = if (armed) DAY_WEIGHT_ON else DAY_WEIGHT_OFF
+    val labelInk = if (armed) ink else ink.copy(alpha = .30f)
+    val measurer = rememberTextMeasurer()
+    val density = LocalDensity.current
+    BoxWithConstraints(Modifier.fillMaxWidth().padding(end = 8.dp), contentAlignment = Alignment.CenterStart) {
+        val cap = if (weekdayWidth < 80.dp) 19.dp else DAY_CAP_DP.dp
+        val label = text + suffix
+        val fittedCap = remember(label, maxWidth, cap, density, measurer, weight) {
+            val available = with(density) { maxWidth.toPx() }
+            fun fits(candidate: Dp) = measurer.measure(label,
+                ClockFace.capitals(candidate, ClockFace.CONDENSED, weight = weight),
+                softWrap = false, maxLines = 1).size.width <= available
+            if (fits(cap)) cap else {
+                var low = 0.1f
+                var high = cap.value
+                repeat(12) {
+                    val mid = (low + high) / 2
+                    if (fits(mid.dp)) low = mid else high = mid
+                }
+                low.dp
+            }
+        }
+        CapText(label, fittedCap, labelInk, width = ClockFace.CONDENSED, weight = weight)
+    }
 }
 
 /** Weight is the state, the same way it is on the numerals above. Not a second colour ramp. */

@@ -36,15 +36,26 @@ data class Alarm(
     val skippedOccurrenceMillis: Long? = null,
     /** Retains the consumed calendar occurrence when the system zone changes. */
     val skippedOccurrenceDate: LocalDate? = null,
+    /** Calendar-date scheduling adapted from Abhijeet Yadav (junksidetm), PR #13 (59bf319). */
+    val specificDate: LocalDate? = null,
+    /** Preserve malformed persisted dates without turning them into next-time alarms. */
+    val invalidSpecificDate: String? = null,
 ) {
-    val isOneShot: Boolean get() = days.isEmpty()
+    val hasSpecificDate: Boolean get() = specificDate != null || invalidSpecificDate != null
+    val isOneShot: Boolean get() = days.isEmpty() || hasSpecificDate
 
     /** The next instant this alarm would sound, or null when it is off. */
     fun nextFire(now: ZonedDateTime): ZonedDateTime? {
-        if (!enabled) return null
+        if (!enabled || invalidSpecificDate != null) return null
         snoozedUntilMillis?.let { at ->
             val snooze = java.time.Instant.ofEpochMilli(at).atZone(now.zone)
             if (snooze.isAfter(now)) return snooze
+        }
+        if (specificDate != null) {
+            return specificDateTime(now.zone)?.takeIf {
+                it.isAfter(now) && it.toInstant().toEpochMilli() != skippedOccurrenceMillis &&
+                    it.toLocalDate() != skippedOccurrenceDate
+            }
         }
         val todayAt = now.with(time).withSecond(0).withNano(0)
         if (isOneShot) return (if (todayAt.isAfter(now)) todayAt else todayAt.plusDays(1))
@@ -57,6 +68,9 @@ data class Alarm(
 
     /** The words the app prints: "Every day" / "Weekdays" / "Mon, Wed, Fri" / "Tomorrow". */
     fun repeatLabel(now: LocalDate = LocalDate.now()): String = when {
+        invalidSpecificDate != null -> "Choose a new date"
+        specificDate != null -> specificDate.format(java.time.format.DateTimeFormatter.ofLocalizedDate(
+            java.time.format.FormatStyle.MEDIUM))
         isOneShot -> "Once"
         days.size == 7 -> "Every day"
         days == WEEKDAYS -> "Weekdays"

@@ -175,6 +175,8 @@ fun ClockApp(startTab: String? = null, startRequestId: Long = 0L, vm: ClockViewM
         }
 
         var editing by remember { mutableStateOf<Alarm?>(null) }
+        var alarmEditorCancelling by remember { mutableStateOf(false) }
+        var alarmEditorRequest by remember { mutableIntStateOf(0) }
         var showNewAlarmPicker by remember { mutableStateOf(false) }
         var showAddCitySheet by rememberSaveable { mutableStateOf(false) }
         var selectedWorldCityZoneId by rememberSaveable { mutableStateOf<String?>(null) }
@@ -235,8 +237,9 @@ fun ClockApp(startTab: String? = null, startRequestId: Long = 0L, vm: ClockViewM
                 alarmConfirmations.show("Alarm in ${app.expressiveclock.core.alarmConfirmationUntil(now, next)}")
             }
         }
-        fun saveWithConfirmation(draft: Alarm) {
-            vm.saveAlarm(draft, ::confirmAlarm)
+        fun saveWithConfirmation(draft: Alarm, onAccepted: () -> Unit) {
+            vm.saveAlarm(draft, onSaved = { saved -> confirmAlarm(saved); onAccepted() },
+                onInvalid = { editing = it; showNewAlarmPicker = false; alarmEditorRequest++ })
         }
 
         // Asked once, on first composition. Denying it costs the notifications and nothing else.
@@ -391,12 +394,13 @@ fun ClockApp(startTab: String? = null, startRequestId: Long = 0L, vm: ClockViewM
                                 AlarmsScreen(alarms = alarms, weekStart = settings.alarms.weekStart,
                                     staggerEntranceToken = isPostOnboardingStaggerToken,
                                     onStaggerConsumed = { isPostOnboardingStaggerToken = 0 },
-                                    onToggle = { vm.toggleAlarm(it, ::confirmAlarm) }, onEdit = { editing = it },
+                                    onToggle = { vm.toggleAlarm(it, ::confirmAlarm, onInvalid = { rejected -> editing = rejected; alarmEditorRequest++ }) },
+                                    onEdit = { alarmEditorCancelling = false; editing = it },
                                     onAddAlarm = { showNewAlarmPicker = true },
                                     onDeleteAlarms = { vm.deleteAlarms(it) },
                                     onSelectionCountChange = { alarmSelectionCount = it },
                                     clearSelectionSignal = clearSelectionSignal, deleteClickSignal = deleteClickSignal,
-                                    editingAlarm = editing, widePane = single,
+                                    editingAlarm = editing.takeUnless { alarmEditorCancelling }, widePane = single,
                                     contentPadding = insets, modifier = layout)
                             }
                         }
@@ -407,17 +411,11 @@ fun ClockApp(startTab: String? = null, startRequestId: Long = 0L, vm: ClockViewM
                                 cities = cities, selectedZoneId = selectedWorldCityZoneId,
                                 onSelectCity = { selectedWorldCityZoneId = it.zone.id },
                                 onShowLocalTime = { selectedWorldCityZoneId = null },
-                                alarmContent = { alarmCards(it, true, PaddingValues(vertical = 8.dp)) },
-                                showAlarmEditor = editing != null,
-                                alarmEditor = {
-                                    app.expressiveclock.ui.screens.InlineAlarmEditorPanel(
-                                        editingAlarm = editing,
-                                        weekStart = settings.alarms.weekStart,
-                                        order = settings.alarms.weekStart.order(app.expressiveclock.ui.sheets.systemFirstDay()),
-                                        onSave = { saveWithConfirmation(it); editing = null; showNewAlarmPicker = false },
-                                        onCancel = { editing = null; showNewAlarmPicker = false },
-                                        onDelete = { vm.deleteAlarms(setOf(it)); editing = null; showNewAlarmPicker = false })
-                                },
+                                // Give the existing progressive edge blur room to taper the scrolling
+                                // cards before the pane boundary; keep the editor outside that layer.
+                                alarmContent = { alarmCards(it, true, PaddingValues(top = 8.dp, bottom = 64.dp)) },
+                                showAlarmEditor = false,
+                                alarmEditor = {},
                                 modifier = Modifier.padding(body))
                         } else {
                             val phoneTab = current
@@ -506,7 +504,7 @@ fun ClockApp(startTab: String? = null, startRequestId: Long = 0L, vm: ClockViewM
                     cities = cities, selectedZoneId = selectedWorldCityZoneId,
                     onSelectCity = { selectedWorldCityZoneId = it.zone.id },
                     onShowLocalTime = { selectedWorldCityZoneId = null },
-                    alarmContent = {}, showAlarmEditor = editing != null, alarmEditor = {},
+                    alarmContent = {}, showAlarmEditor = false, alarmEditor = {},
                     modifier = Modifier.graphicsLayer {
                         val page = pagerState.currentPage + pagerState.currentPageOffsetFraction
                         translationX = -(page - 1f).coerceAtLeast(0f) * size.width
@@ -569,13 +567,15 @@ fun ClockApp(startTab: String? = null, startRequestId: Long = 0L, vm: ClockViewM
     }
 }
 
-        if (!wideClockPages) {
-            editing?.let { draft ->
+        // New and existing alarms share the same modal editor on every layout.
+        editing?.let { draft ->
+            androidx.compose.runtime.key(draft.id, alarmEditorRequest) {
                 AlarmEditSheet(
                     initial = draft,
                     weekStart = settings.alarms.weekStart,
-                    onDismiss = { editing = null },
-                    onSave = { saveWithConfirmation(it); editing = null },
+                    onCancelStarted = { alarmEditorCancelling = true },
+                    onDismiss = { editing = null; alarmEditorCancelling = false },
+                    onSave = { saveWithConfirmation(it) { editing = null } },
                     onDelete = if (draft.id == 0L) null else ({ id -> vm.deleteAlarm(id) }),
                 )
             }
@@ -586,7 +586,7 @@ fun ClockApp(startTab: String? = null, startRequestId: Long = 0L, vm: ClockViewM
                 initial = vm.blankAlarm(),
                 weekStart = settings.alarms.weekStart,
                 onDismiss = { showNewAlarmPicker = false },
-                onSave = { alarm -> saveWithConfirmation(alarm); showNewAlarmPicker = false },
+                onSave = { alarm -> saveWithConfirmation(alarm) { showNewAlarmPicker = false } },
             )
         }
 

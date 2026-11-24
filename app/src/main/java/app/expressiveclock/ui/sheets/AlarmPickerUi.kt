@@ -50,6 +50,10 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.snapshotFlow
+import androidx.compose.ui.draw.alpha
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.disabled
+import app.expressiveclock.core.dateIssue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -125,9 +129,18 @@ fun AlarmPickerSheetContent(
     onSave: () -> Unit,
     onDelete: () -> Unit,
     modal: Boolean = false,
+    specificDate: java.time.LocalDate? = null,
+    invalidSpecificDate: Boolean = false,
+    onSpecificDateChange: (java.time.LocalDate?) -> Unit = {},
 ) {
     val locale = LocalConfiguration.current.locales[0]
     val density = LocalDensity.current
+    val wallTime by app.expressiveclock.ui.rememberWallTicker()
+    val dateDraft = app.expressiveclock.core.Alarm(0, java.time.LocalTime.of(
+        if (is24Hour) hour else (hour % 12) + if (pm) 12 else 0, minute),
+        specificDate = specificDate, invalidSpecificDate = if (invalidSpecificDate) "invalid" else null)
+    val dateNow = java.time.Instant.ofEpochMilli(wallTime).atZone(java.time.ZoneId.systemDefault())
+    val dateIssue = dateDraft.dateIssue(dateNow)
     // Material's modal content insets already include the animated IME. Subtract that
     // same inset from the body cap so the sheet keeps a visible top margin instead of
     // growing to screen height. The drag handle in New/Edit Alarm is exactly 32dp.
@@ -176,6 +189,7 @@ fun AlarmPickerSheetContent(
                 text = "Save",
                 primary = true,
                 onClick = onSave,
+                enabled = dateIssue == null,
                 icon = Icons.Rounded.Check,
             )
         }
@@ -251,7 +265,7 @@ fun AlarmPickerSheetContent(
             weekOrder.forEach { day ->
                 DayChip(
                     label = day.getDisplayName(DayTextStyle.NARROW, locale),
-                    selected = day in days,
+                    selected = day in days && specificDate == null && !invalidSpecificDate,
                     modifier = Modifier.weight(1f),
                     onClick = { onToggleDay(day) },
                 )
@@ -259,6 +273,8 @@ fun AlarmPickerSheetContent(
         }
 
         Spacer(Modifier.height(8.dp))
+
+        AlarmDateControls(dateDraft, dateNow, dateIssue, onSpecificDateChange)
 
         AlarmNameCard(label = label, onLabelChange = onLabelChange, clearDefault = title == "New Alarm")
 
@@ -679,6 +695,7 @@ internal fun SheetHeaderButton(
     primary: Boolean,
     onClick: () -> Unit,
     icon: androidx.compose.ui.graphics.vector.ImageVector? = null,
+    enabled: Boolean = true,
 ) {
     Row(
         modifier = Modifier
@@ -688,7 +705,8 @@ internal fun SheetHeaderButton(
                 if (primary) MaterialTheme.colorScheme.primary
                 else MaterialTheme.colorScheme.primaryContainer.copy(alpha = .70f)
             )
-            .elasticClickable(onClick = onClick)
+            .then(if (enabled) Modifier.elasticClickable(onClick = onClick) else Modifier
+                .semantics { disabled() }.alpha(0.38f))
             .padding(horizontal = 16.dp),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.Center,

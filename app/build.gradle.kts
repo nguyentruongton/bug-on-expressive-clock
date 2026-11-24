@@ -14,8 +14,8 @@ android {
         applicationId = "app.expressiveclock"
         minSdk = 26
         targetSdk = 36
-        versionCode = 18
-        versionName = "0.1.15"
+        versionCode = 19
+        versionName = "0.1.16"
     }
 
     // Configure lazily enough for debug/tests/lint to work in contributor checkouts.
@@ -142,6 +142,8 @@ dependencies {
 
     debugImplementation(libs.androidx.compose.ui.tooling)
 
+    // Real JSON codec for persistence regression tests; Android unit-test stubs are no-ops.
+    testImplementation("org.json:json:20240303")
     testImplementation(libs.junit)
     testImplementation(libs.kotlin.test)
     testImplementation(libs.androidx.test.core)

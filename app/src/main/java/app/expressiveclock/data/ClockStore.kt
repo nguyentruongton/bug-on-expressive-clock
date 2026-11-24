@@ -11,6 +11,7 @@ import androidx.datastore.preferences.core.longPreferencesKey
 import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
 import app.expressiveclock.core.Alarm
+import app.expressiveclock.core.normalizedSchedule
 import app.expressiveclock.core.ClockTimer
 import app.expressiveclock.core.Lap
 import app.expressiveclock.core.Stopwatch
@@ -83,7 +84,7 @@ class ClockStore(private val context: Context) {
     suspend fun updateAlarms(transform: (List<Alarm>) -> List<Alarm>): List<Alarm> {
         var result = emptyList<Alarm>()
         context.unlockedPrefs().edit { p ->
-            result = transform(p[KEY_ALARMS]?.let(::parseAlarms) ?: SEED_ALARMS)
+            result = transform(p[KEY_ALARMS]?.let(::parseAlarms) ?: SEED_ALARMS).map { it.normalizedSchedule() }
             p[KEY_ALARMS] = encodeAlarms(result)
         }
         return result
@@ -312,8 +313,9 @@ private inline fun <reified E : Enum<E>> enumOr(name: String?, fallback: E): E =
 
 /* ── JSON ───────────────────────────────────────────────────────────────────────────────────── */
 
-private fun encodeAlarms(list: List<Alarm>) = JSONArray().apply {
-    list.forEach { a ->
+internal fun encodeAlarms(list: List<Alarm>) = JSONArray().apply {
+    list.forEach { original ->
+        val a = original.normalizedSchedule()
         put(
             JSONObject()
                 .put("id", a.id)
@@ -326,15 +328,18 @@ private fun encodeAlarms(list: List<Alarm>) = JSONArray().apply {
                 .apply { a.snoozedUntilMillis?.let { put("snoozed", it) } }
                 .apply { a.skippedOccurrenceMillis?.let { put("skippedOccurrence", it) } }
                 .apply { a.skippedOccurrenceDate?.let { put("skippedDate", it.toString()) } }
+                .apply { (a.specificDate?.toString() ?: a.invalidSpecificDate)?.let { put("specificDate", it) } }
         )
     }
 }.toString()
 
-private fun parseAlarms(s: String): List<Alarm> = runCatching {
+internal fun parseAlarms(s: String): List<Alarm> = runCatching {
     val arr = JSONArray(s)
     (0 until arr.length()).map { i ->
         val o = arr.getJSONObject(i)
         val days = o.getJSONArray("days")
+        val rawDate = if (o.has("specificDate") && !o.isNull("specificDate")) o.get("specificDate") else null
+        val date = (rawDate as? String)?.let { runCatching { java.time.LocalDate.parse(it) }.getOrNull() }
         Alarm(
             id = o.getLong("id"),
             time = LocalTime.ofSecondOfDay(o.getLong("time")),
@@ -346,7 +351,9 @@ private fun parseAlarms(s: String): List<Alarm> = runCatching {
             snoozedUntilMillis = o.optLong("snoozed").takeIf { it > 0L },
             skippedOccurrenceMillis = o.optLong("skippedOccurrence").takeIf { it > 0L },
             skippedOccurrenceDate = runCatching { java.time.LocalDate.parse(o.optString("skippedDate")) }.getOrNull(),
-        )
+            specificDate = date,
+            invalidSpecificDate = rawDate?.takeIf { date == null }?.toString(),
+        ).normalizedSchedule()
     }
 }.getOrDefault(emptyList())
 
