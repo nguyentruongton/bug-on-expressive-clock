@@ -135,6 +135,19 @@ fun TimersScreen(
     val remaining = timer?.remaining(nowElapsedMillis) ?: Duration.ZERO
     val isFinished = timer?.state == TimerState.FINISHED || (timer?.state == TimerState.RUNNING && remaining.isZero)
     val running = timer?.state == TimerState.RUNNING && !isFinished
+    val dialEnabled = timer != null && !isFinished &&
+        (timer.state == TimerState.RUNNING || timer.state == TimerState.PAUSED)
+    val dialScale = rememberDialRunningFeedback(if (dialEnabled) running else null, timer?.id)
+    // Wait for persisted state acknowledgement before accepting another UI toggle.
+    var togglePending by remember(timer?.id, timer?.state) { mutableStateOf(false) }
+    val pauseResume = {
+        if (dialEnabled && !togglePending &&
+            (timer.state != TimerState.RUNNING ||
+                !timer.remaining(android.os.SystemClock.elapsedRealtime()).isZero)) {
+            togglePending = true
+            onPauseResume()
+        }
+    }
     val windowSizeInfo = LocalAppWindowSizeInfo.current
     val bodyScroll = rememberScrollState()
 
@@ -182,9 +195,11 @@ fun TimersScreen(
                         timer = timer,
                         nowElapsedMillis = nowElapsedMillis,
                         isFinished = isFinished,
-                        onPauseResume = onPauseResume,
+                        onPauseResume = pauseResume,
                         onAddTen = onAddTen,
                         onCancel = onCancel,
+                        dialScale = dialScale.value,
+                        dialEnabled = dialEnabled,
                     )
                 } else {
                     ExpandedSetTimerBody(
@@ -248,7 +263,7 @@ fun TimersScreen(
                     label = "timerBody",
                 ) { showingActive ->
                     if (showingActive && timer != null) {
-                        RunningTimerBody(timer, nowElapsedMillis, isFinished)
+                        RunningTimerBody(timer, nowElapsedMillis, isFinished, pauseResume, dialScale.value, dialEnabled)
                     } else {
                         SetTimerBody(
                             keyHeight = keyHeight,
@@ -270,7 +285,7 @@ fun TimersScreen(
                 running = running,
                 isFinished = isFinished,
                 onStart = onStart,
-                onPauseResume = onPauseResume,
+                onPauseResume = pauseResume,
                 onAddTen = onAddTen,
                 onCancel = onCancel,
             )
@@ -731,6 +746,8 @@ private fun ExpandedRunningTimerBody(
     onPauseResume: () -> Unit,
     onAddTen: () -> Unit,
     onCancel: () -> Unit,
+    dialScale: Float,
+    dialEnabled: Boolean,
 ) {
     val remaining = if (isFinished) Duration.ZERO else timer.remaining(nowElapsedMillis)
     val progress = if (isFinished) 1f else timer.fractionLeft(nowElapsedMillis).coerceIn(0f, 1f)
@@ -749,6 +766,8 @@ private fun ExpandedRunningTimerBody(
                 Box(
                     modifier = Modifier
                         .size(circleSize)
+                        .graphicsLayer { scaleX = dialScale; scaleY = dialScale }
+                        .timerDialTap(dialEnabled, timer.state == TimerState.RUNNING, onPauseResume)
                         .clip(CircleShape)
                         .background(surface)
                         .border(1.25.dp, MaterialTheme.colorScheme.outline.copy(alpha = .12f), CircleShape),
@@ -1100,6 +1119,9 @@ private fun RunningTimerBody(
     timer: ClockTimer,
     nowElapsedMillis: Long,
     isFinished: Boolean = false,
+    onPauseResume: () -> Unit,
+    dialScale: Float,
+    dialEnabled: Boolean,
 ) {
     val remaining = if (isFinished) Duration.ZERO else timer.remaining(nowElapsedMillis)
     val progress = if (isFinished) 1f else timer.fractionLeft(nowElapsedMillis).coerceIn(0f, 1f)
@@ -1116,6 +1138,8 @@ private fun RunningTimerBody(
             Box(
                 modifier = Modifier
                     .size(circleSize)
+                    .graphicsLayer { scaleX = dialScale; scaleY = dialScale }
+                    .timerDialTap(dialEnabled, timer.state == TimerState.RUNNING, onPauseResume)
                     .clip(CircleShape)
                     .background(surface)
                     .border(1.25.dp, MaterialTheme.colorScheme.outline.copy(alpha = .12f), CircleShape),

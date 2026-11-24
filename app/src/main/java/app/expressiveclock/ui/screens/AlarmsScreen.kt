@@ -1207,8 +1207,10 @@ internal fun DeleteItemsConfirmationSheet(
         onDismissRequest = onDismiss,
         sheetState = sheetState,
         shape = RoundedCornerShape(topStart = 28.dp, topEnd = 28.dp),
+        dragHandle = null,
         containerColor = MaterialTheme.colorScheme.surface,
     ) {
+        app.expressiveclock.ui.sheets.SheetDragHandle(sheetState, onDismiss)
         Column(
             modifier = Modifier
                 .fillMaxWidth()

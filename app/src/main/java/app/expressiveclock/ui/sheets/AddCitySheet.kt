@@ -110,21 +110,20 @@ fun AddCitySheet(existing: List<WorldCity>, nowUtcMillis: Long,
         if (focused) MaterialTheme.colorScheme.surfaceContainerHigh else MaterialTheme.colorScheme.surfaceContainerLow,
         tween(180), label = "locationSearchFocus")
     ModalBottomSheet(onDismissRequest = onDismiss, sheetState = sheet,
-        shape = AlarmSheetShape, dragHandle = {
-            Box(Modifier.pointerInput(Unit) {
-                // Observe without consuming: Material still owns the drag and settling gesture.
-                awaitEachGesture {
-                    awaitFirstDown(requireUnconsumed = false)
-                    var travel = 0f
-                    do {
-                        val event = awaitPointerEvent(PointerEventPass.Initial)
-                        travel += event.changes.firstOrNull()?.positionChange()?.y ?: 0f
-                        if (travel < -viewConfiguration.touchSlop) searching = true
-                    } while (event.changes.any { it.pressed })
-                }
-            }) { AlarmEditorDragHandle() }
-        },
+        shape = AlarmSheetShape, dragHandle = null,
         containerColor = MaterialTheme.colorScheme.surface) {
+        SheetDragHandle(sheet, onDismiss, compact = true, modifier = Modifier.pointerInput(Unit) {
+            // Observe without consuming: Material still owns the drag and settling gesture.
+            awaitEachGesture {
+                awaitFirstDown(requireUnconsumed = false)
+                var travel = 0f
+                do {
+                    val event = awaitPointerEvent(PointerEventPass.Initial)
+                    travel += event.changes.firstOrNull()?.positionChange()?.y ?: 0f
+                    if (travel < -viewConfiguration.touchSlop) searching = true
+                } while (event.changes.any { it.pressed })
+            }
+        })
         Column(Modifier.fillMaxWidth().height(expandedHeight).navigationBarsPadding()) {
             SelectionSheetHeader("Add Location", onCancel = { dismiss() })
             TextField(value = query, onValueChange = { query = it; searching = true },

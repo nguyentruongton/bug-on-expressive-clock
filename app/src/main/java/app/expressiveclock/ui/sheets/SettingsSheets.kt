@@ -71,10 +71,13 @@ fun AppSettingsSheet(
     onChange: ((ClockSettings) -> ClockSettings) -> Unit,
     onDismiss: () -> Unit,
 ) {
+    val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
     ModalBottomSheet(
         onDismissRequest = onDismiss,
-        sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true),
+        sheetState = sheetState,
+        dragHandle = null,
     ) {
+        SheetDragHandle(sheetState, onDismiss)
         Column(Modifier.verticalScroll(rememberScrollState()).padding(bottom = 32.dp)) {
             SheetTitle("Settings")
 
@@ -199,10 +202,13 @@ fun AlarmSettingsSheet(
     onChange: ((ClockSettings) -> ClockSettings) -> Unit,
     onDismiss: () -> Unit,
 ) {
+    val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
     ModalBottomSheet(
         onDismissRequest = onDismiss,
-        sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true),
+        sheetState = sheetState,
+        dragHandle = null,
     ) {
+        SheetDragHandle(sheetState, onDismiss)
         Column(Modifier.verticalScroll(rememberScrollState()).padding(bottom = 32.dp)) {
             SheetTitle("Alarm settings")
 
@@ -508,10 +514,13 @@ fun StopwatchSettingsSheet(
     onChange: ((ClockSettings) -> ClockSettings) -> Unit,
     onDismiss: () -> Unit,
 ) {
+    val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
     ModalBottomSheet(
         onDismissRequest = onDismiss,
-        sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true),
+        sheetState = sheetState,
+        dragHandle = null,
     ) {
+        SheetDragHandle(sheetState, onDismiss)
         Column(Modifier.verticalScroll(rememberScrollState()).padding(bottom = 32.dp)) {
             SheetTitle("Appearance")
             ChoiceRow(
@@ -557,10 +566,13 @@ fun WorldSettingsSheet(
     onChange: ((ClockSettings) -> ClockSettings) -> Unit,
     onDismiss: () -> Unit,
 ) {
+    val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
     ModalBottomSheet(
         onDismissRequest = onDismiss,
-        sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true),
+        sheetState = sheetState,
+        dragHandle = null,
     ) {
+        SheetDragHandle(sheetState, onDismiss)
         Column(Modifier.padding(bottom = 32.dp)) {
             SheetTitle("World clock settings")
             SwitchRow(
@@ -602,10 +614,13 @@ fun TimerSettingsSheet(
         }
     }
 
+    val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
     ModalBottomSheet(
         onDismissRequest = onDismiss,
-        sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true),
+        sheetState = sheetState,
+        dragHandle = null,
     ) {
+        SheetDragHandle(sheetState, onDismiss)
         Column(Modifier.padding(bottom = 32.dp)) {
             SheetTitle("Timer settings")
             NavigateRow(

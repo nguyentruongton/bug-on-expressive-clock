@@ -103,45 +103,7 @@ fun StopwatchScreen(
     val slowest = stopwatch.slowest
     val listState = rememberLazyListState()
     val view = LocalView.current
-    var previousRunning by remember { mutableStateOf<Boolean?>(null) }
-
-    val faceScale = remember { Animatable(1f) }
-    var previousRunningForScale by remember { mutableStateOf<Boolean?>(null) }
-
-    LaunchedEffect(stopwatch.running) {
-        val prevScale = previousRunningForScale
-        previousRunningForScale = stopwatch.running
-        if (prevScale != null && prevScale != stopwatch.running) {
-            faceScale.snapTo(0.95f)
-            faceScale.animateTo(
-                targetValue = 1f,
-                animationSpec = spring(
-                    dampingRatio = 0.58f,
-                    stiffness = 380f,
-                ),
-            )
-        }
-    }
-
-    LaunchedEffect(stopwatch.running) {
-        val prev = previousRunning
-        previousRunning = stopwatch.running
-        if (prev != null && prev != stopwatch.running) {
-            if (stopwatch.running) {
-                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
-                    view.performHapticFeedback(HapticFeedbackConstants.GESTURE_START)
-                } else {
-                    view.performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP)
-                }
-            } else {
-                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
-                    view.performHapticFeedback(HapticFeedbackConstants.GESTURE_END)
-                } else {
-                    view.performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP)
-                }
-            }
-        }
-    }
+    val faceScale = rememberDialRunningFeedback(stopwatch.running)
 
     val handleReset = {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
@@ -234,9 +196,10 @@ fun StopwatchScreen(
         ) {
             item(key = "face") {
                 BoxWithConstraints(Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) {
-                    val diameter = minOf(maxWidth, STOPWATCH_FACE_SIZE, if (compactFace) availableFace else STOPWATCH_FACE_SIZE)
+                    val originalDiameter = minOf(maxWidth, STOPWATCH_FACE_SIZE, if (compactFace) availableFace else STOPWATCH_FACE_SIZE)
+                    val diameter = minOf(originalDiameter, stopwatchFaceDiameter(maxWidth))
                     val fitScale = diameter / STOPWATCH_FACE_SIZE
-                    Box(Modifier.fillMaxWidth().height(diameter + 130.dp), contentAlignment = Alignment.Center) {
+                    Box(Modifier.fillMaxWidth().height(originalDiameter + 130.dp), contentAlignment = Alignment.Center) {
                         Box(Modifier.requiredSize(STOPWATCH_FACE_SIZE).graphicsLayer {
                             scaleX = fitScale * faceScale.value
                             scaleY = fitScale * faceScale.value
