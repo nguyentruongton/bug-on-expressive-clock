@@ -14,8 +14,8 @@ android {
         applicationId = "app.expressiveclock"
         minSdk = 26
         targetSdk = 36
-        versionCode = 20
-        versionName = "0.1.17"
+        versionCode = 21
+        versionName = "0.1.18"
     }
 
     // Configure lazily enough for debug/tests/lint to work in contributor checkouts.
@@ -120,6 +120,11 @@ kotlin {
 }
 
 dependencies {
+    constraints {
+        implementation("androidx.fragment:fragment:1.9.1") {
+            because("Play in-app updates transitively requests Fragment 1.1.0, flagged as outdated by Play Console")
+        }
+    }
     implementation(platform(libs.androidx.compose.bom))
 
     implementation(libs.androidx.material3)

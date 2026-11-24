@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Match enableEdgeToEdge before Compose draws its first frame. Keep shortEdges
+         only in values-v28 for Android 9 and 10, where always is unavailable. -->
+    <style name="Theme.MaterialClock.App" parent="android:Theme.Material.NoActionBar">
+        <item name="android:statusBarColor">@android:color/transparent</item>
+        <item name="android:navigationBarColor">@android:color/transparent</item>
+        <item name="android:windowBackground">?android:attr/colorBackground</item>
+        <item name="android:windowLayoutInDisplayCutoutMode">always</item>
+    </style>
+</resources>

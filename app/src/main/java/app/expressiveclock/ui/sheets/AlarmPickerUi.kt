@@ -38,6 +38,8 @@ import androidx.compose.material3.TextButton
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.animateDpAsState
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.animateIntAsState
 import androidx.compose.animation.core.spring
 import androidx.compose.animation.core.tween
@@ -56,6 +58,9 @@ import androidx.compose.ui.semantics.disabled
 import app.expressiveclock.core.dateIssue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.layout.onSizeChanged
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.foundation.layout.statusBars
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
@@ -69,6 +74,7 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.ime
+import androidx.compose.foundation.layout.imeAnimationTarget
 import androidx.compose.foundation.layout.navigationBars
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.gestures.BringIntoViewSpec
@@ -77,6 +83,7 @@ import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.Dp
 import app.expressiveclock.ui.elasticClickable
 import app.expressiveclock.ui.glass
 import app.expressiveclock.ui.theme.ClockFace
@@ -99,6 +106,7 @@ private val AlarmCardShape = RoundedCornerShape(22.dp)
 private val AlarmControlShape = RoundedCornerShape(18.dp)
 private val TickerItemHeight = 72.dp
 private val TickerViewportHeight = 184.dp
+private val CompactTickerViewportHeight = 120.dp
 private val TickerHighlightHeight = 58.dp
 private val TickerFrameShape = RoundedCornerShape(26.dp)
 
@@ -135,18 +143,20 @@ fun AlarmPickerSheetContent(
 ) {
     val locale = LocalConfiguration.current.locales[0]
     val density = LocalDensity.current
+    val configuration = LocalConfiguration.current
+    // Choose once from the full screen, not the changing IME viewport. Shorter
+    // phone wheels leave room for AM/PM and Name while the whole sheet glides.
+    val tickerViewportHeight = if (configuration.smallestScreenWidthDp < 600 &&
+        configuration.screenHeightDp < 900) CompactTickerViewportHeight else TickerViewportHeight
     val wallTime by app.expressiveclock.ui.rememberWallTicker()
     val dateDraft = app.expressiveclock.core.Alarm(0, java.time.LocalTime.of(
         if (is24Hour) hour else (hour % 12) + if (pm) 12 else 0, minute),
         specificDate = specificDate, invalidSpecificDate = if (invalidSpecificDate) "invalid" else null)
     val dateNow = java.time.Instant.ofEpochMilli(wallTime).atZone(java.time.ZoneId.systemDefault())
     val dateIssue = dateDraft.dateIssue(dateNow)
-    // Material's modal content insets already include the animated IME. Subtract that
-    // same inset from the body cap so the sheet keeps a visible top margin instead of
-    // growing to screen height. The drag handle in New/Edit Alarm is exactly 32dp.
-    val bottomInset = with(density) {
-        maxOf(WindowInsets.ime.getBottom(this), WindowInsets.navigationBars.getBottom(this)).toDp()
-    }
+    // Keep the body height independent of the IME: the modal surface lifts as a
+    // whole instead of remeasuring its header and scroll viewport during keyboard entry.
+    val bottomInset = with(density) { WindowInsets.navigationBars.getBottom(this).toDp() }
     val maxBodyHeight = (LocalConfiguration.current.screenHeightDp.dp * .82f - bottomInset - 32.dp)
         .coerceAtLeast(96.dp)
     Column(
@@ -194,8 +204,8 @@ fun AlarmPickerSheetContent(
             )
         }
 
-        CompositionLocalProvider(LocalBringIntoViewSpec provides AlarmNameBringIntoViewSpec) {
         val bodyScroll = rememberScrollState()
+        CompositionLocalProvider(LocalBringIntoViewSpec provides AlarmNameBringIntoViewSpec) {
         Column(Modifier.weight(1f, fill = false)
             .persistentScrollEdges(bodyScroll),
             horizontalAlignment = Alignment.CenterHorizontally) {
@@ -216,6 +226,7 @@ fun AlarmPickerSheetContent(
             ) {
                 AlarmWheel(
                     modifier = Modifier.weight(1f),
+                    viewportHeight = tickerViewportHeight,
                     values = if (is24Hour) (0..23).toList() else (1..12).toList(),
                     selected = if (is24Hour) hour else hour12(hour),
                     format = { "%02d".format(it) },
@@ -233,6 +244,7 @@ fun AlarmPickerSheetContent(
                 )
                 AlarmWheel(
                     modifier = Modifier.weight(1f),
+                    viewportHeight = tickerViewportHeight,
                     values = (0..59).toList(),
                     selected = minute,
                     format = { "%02d".format(it) },
@@ -299,18 +311,40 @@ fun AlarmPickerSheetContent(
     }
 }
 
-/** Keep the focused name visible with the smallest internal scroll; the header stays pinned. */
+/** Glide the unchanged sheet toward the IME destination, stopping below the status bar. */
+@OptIn(androidx.compose.foundation.layout.ExperimentalLayoutApi::class)
+@Composable
+internal fun Modifier.alarmEditorImeLift(): Modifier {
+    val density = LocalDensity.current
+    val screenHeight = with(density) { LocalConfiguration.current.screenHeightDp.dp.toPx() }
+    val ime = WindowInsets.imeAnimationTarget
+    val navigationBars = WindowInsets.navigationBars
+    val statusBars = WindowInsets.statusBars
+    var sheetHeight by remember { mutableIntStateOf(0) }
+    val keyboardLift = (ime.getBottom(density) - navigationBars.getBottom(density)).coerceAtLeast(0)
+    val availableLift = (screenHeight - sheetHeight - statusBars.getTop(density)).coerceAtLeast(0f)
+    // Animate one destination rather than snapping to inset updates or restarting
+    // independent animations for the sheet's children.
+    val lift by animateFloatAsState(
+        targetValue = minOf(keyboardLift.toFloat(), availableLift),
+        animationSpec = tween(durationMillis = 250, easing = FastOutSlowInEasing),
+        label = "AlarmSheetKeyboardLift",
+    )
+    return onSizeChanged { sheetHeight = it.height }
+        .graphicsLayer {
+            translationY = -lift
+        }
+}
+
+/** The entire modal surface handles the IME; focus must not independently scroll its body. */
 private object AlarmNameBringIntoViewSpec : BringIntoViewSpec {
-    override fun calculateScrollDistance(offset: Float, size: Float, containerSize: Float): Float = when {
-        offset < 0f -> offset
-        offset + size > containerSize -> offset + size - containerSize
-        else -> 0f
-    }
+    override fun calculateScrollDistance(offset: Float, size: Float, containerSize: Float): Float = 0f
 }
 
 @Composable
 private fun AlarmWheel(
     modifier: Modifier,
+    viewportHeight: Dp,
     values: List<Int>,
     selected: Int,
     format: (Int) -> String,
@@ -397,7 +431,7 @@ private fun AlarmWheel(
     }
 
     Box(
-        modifier = modifier.height(TickerViewportHeight),
+        modifier = modifier.height(viewportHeight),
         contentAlignment = Alignment.Center,
     ) {
         // Stationary selection window. The wheel itself moves underneath this frame.
@@ -414,7 +448,7 @@ private fun AlarmWheel(
             state = state,
             flingBehavior = fling,
             contentPadding = PaddingValues(
-                vertical = (TickerViewportHeight - TickerItemHeight) / 2,
+                vertical = (viewportHeight - TickerItemHeight) / 2,
             ),
             verticalArrangement = Arrangement.spacedBy(0.dp),
             modifier = Modifier.fillMaxSize().progressiveListEdgeMask(1f, 1f),

@@ -1,0 +1,6 @@
+<en-US>
+• Smoother alarm editing: the whole sheet now glides with the keyboard.
+• Compact time wheels keep alarm names visible on smaller phones.
+• Improved edge-to-edge setup for Android 15 and later.
+• Updated compatibility libraries used by in-app updates.
+</en-US>

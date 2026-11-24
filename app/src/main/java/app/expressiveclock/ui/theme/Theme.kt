@@ -77,11 +77,15 @@ fun ClockTheme(
         }
         activity?.enableEdgeToEdge(statusBarStyle = bar, navigationBarStyle = bar)
         activity?.window?.let { window ->
-            WindowCompat.setDecorFitsSystemWindows(window, false)
-            window.navigationBarColor = AndroidColor.TRANSPARENT
+            // enableEdgeToEdge owns decor fitting and transparent system-bar colors.
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
                 window.isNavigationBarContrastEnforced = false
-                window.navigationBarDividerColor = AndroidColor.TRANSPARENT
+                // Preserve the legacy three-button appearance; Android 15 no longer
+                // needs this deprecated divider-color API.
+                if (Build.VERSION.SDK_INT < Build.VERSION_CODES.VANILLA_ICE_CREAM) {
+                    @Suppress("DEPRECATION")
+                    window.navigationBarDividerColor = AndroidColor.TRANSPARENT
+                }
             }
         }
     }

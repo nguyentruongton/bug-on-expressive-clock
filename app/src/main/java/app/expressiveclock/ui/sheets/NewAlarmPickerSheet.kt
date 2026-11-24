@@ -1,5 +1,8 @@
 package app.expressiveclock.ui.sheets
 
+import androidx.compose.ui.Modifier
+import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.navigationBars
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.rememberModalBottomSheetState
@@ -65,6 +68,8 @@ fun NewAlarmPickerSheet(
     ModalBottomSheet(
         onDismissRequest = onDismiss,
         sheetState = sheetState,
+        modifier = Modifier.alarmEditorImeLift(),
+        contentWindowInsets = { WindowInsets.navigationBars },
         shape = AlarmSheetShape,
         dragHandle = null,
         containerColor = androidx.compose.material3.MaterialTheme.colorScheme.surface,
