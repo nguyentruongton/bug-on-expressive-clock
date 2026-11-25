@@ -67,6 +67,7 @@ fun AlarmEditSheet(
         dragHandle = null,
         containerColor = androidx.compose.material3.MaterialTheme.colorScheme.surface,
     ) {
+        val dismissKeyboard = rememberAlarmKeyboardDismissal()
         AlarmEditorDragHandle(sheetState, onDismiss)
         AlarmPickerSheetContent(
             modal = true,
@@ -103,9 +104,9 @@ fun AlarmEditSheet(
                 // Clear the card marker immediately, while retaining this sheet until hide ends.
                 onCancelStarted()
                 scope.launch {
+                    dismissKeyboard()
                     sheetState.hide()
-                }.invokeOnCompletion {
-                    onDismiss()
+                    if (!sheetState.isVisible) onDismiss()
                 }
             },
             onSave = {

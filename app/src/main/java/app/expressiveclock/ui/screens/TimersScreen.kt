@@ -82,6 +82,10 @@ import androidx.compose.ui.graphics.Shape
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.TransformOrigin
 import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.layout.LayoutCoordinates
+import androidx.compose.ui.layout.onPlaced
+import androidx.compose.ui.layout.onGloballyPositioned
+import androidx.compose.foundation.layout.offset
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalView
@@ -216,8 +220,23 @@ fun TimersScreen(
             }
         }
     } else {
+        val density = LocalDensity.current
+        var lightingRoot by remember { mutableStateOf<LayoutCoordinates?>(null) }
+        var lightingCenter by remember { mutableStateOf<Offset?>(null) }
+        var lightingSize by remember { mutableStateOf(0.dp) }
+        Box(modifier.fillMaxSize().padding(contentPadding).onPlaced { lightingRoot = it }) {
+        if (running && lightingCenter != null) {
+            // Keep the lighting outside the body's scrolling raster bounds, as for Stopwatch.
+            Box(Modifier.offset {
+                val center = lightingCenter ?: Offset.Zero
+                val half = with(density) { lightingSize.toPx() / 2f }
+                IntOffset((center.x - half).roundToInt(), (center.y - half).roundToInt())
+            }.size(lightingSize).graphicsLayer {
+                scaleX = dialScale.value; scaleY = dialScale.value
+            }.clockLighting(MaterialTheme.colorScheme.primary, MaterialTheme.colorScheme.surface.luminance() < .5f))
+        }
         Column(
-            modifier = modifier.fillMaxSize().padding(contentPadding).padding(horizontal = 20.dp),
+            modifier = Modifier.fillMaxSize().padding(horizontal = 20.dp),
             horizontalAlignment = Alignment.CenterHorizontally,
         ) {
             BoxWithConstraints(
@@ -263,7 +282,14 @@ fun TimersScreen(
                     label = "timerBody",
                 ) { showingActive ->
                     if (showingActive && timer != null) {
-                        RunningTimerBody(timer, nowElapsedMillis, isFinished, pauseResume, dialScale.value, dialEnabled)
+                        RunningTimerBody(timer, nowElapsedMillis, isFinished, pauseResume, dialScale.value, dialEnabled,
+                            onDialPositioned = { coordinates ->
+                                lightingRoot?.takeIf { it.isAttached }?.let { root ->
+                                    lightingCenter = root.localPositionOf(coordinates,
+                                        Offset(coordinates.size.width / 2f, coordinates.size.height / 2f))
+                                    lightingSize = with(density) { coordinates.size.width.toDp() }
+                                }
+                            })
                     } else {
                         SetTimerBody(
                             keyHeight = keyHeight,
@@ -290,6 +316,7 @@ fun TimersScreen(
                 onCancel = onCancel,
             )
             Spacer(Modifier.height(10.dp))
+        }
         }
     }
 }
@@ -767,6 +794,7 @@ private fun ExpandedRunningTimerBody(
                     modifier = Modifier
                         .size(circleSize)
                         .graphicsLayer { scaleX = dialScale; scaleY = dialScale }
+                        .then(if (running) Modifier.clockLighting(primary, MaterialTheme.colorScheme.surface.luminance() < .5f) else Modifier)
                         .timerDialTap(dialEnabled, timer.state == TimerState.RUNNING, onPauseResume)
                         .clip(CircleShape)
                         .background(surface)
@@ -884,6 +912,7 @@ private fun ExpandedRunningTimerBody(
                 }
             }
         },
+        clipLeftPane = false,
         leftWeight = 1.1f,
         rightWeight = 0.9f,
         paneSpacing = 24.dp,
@@ -1122,6 +1151,7 @@ private fun RunningTimerBody(
     onPauseResume: () -> Unit,
     dialScale: Float,
     dialEnabled: Boolean,
+    onDialPositioned: (LayoutCoordinates) -> Unit,
 ) {
     val remaining = if (isFinished) Duration.ZERO else timer.remaining(nowElapsedMillis)
     val progress = if (isFinished) 1f else timer.fractionLeft(nowElapsedMillis).coerceIn(0f, 1f)
@@ -1139,6 +1169,7 @@ private fun RunningTimerBody(
                 modifier = Modifier
                     .size(circleSize)
                     .graphicsLayer { scaleX = dialScale; scaleY = dialScale }
+                    .onGloballyPositioned(onDialPositioned)
                     .timerDialTap(dialEnabled, timer.state == TimerState.RUNNING, onPauseResume)
                     .clip(CircleShape)
                     .background(surface)

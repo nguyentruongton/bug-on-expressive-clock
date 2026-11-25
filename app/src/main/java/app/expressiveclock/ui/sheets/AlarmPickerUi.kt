@@ -75,6 +75,8 @@ import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.ime
 import androidx.compose.foundation.layout.imeAnimationTarget
+import androidx.compose.foundation.layout.imeAnimationSource
+import androidx.compose.runtime.withFrameNanos
 import androidx.compose.foundation.layout.navigationBars
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.gestures.BringIntoViewSpec
@@ -89,6 +91,10 @@ import app.expressiveclock.ui.glass
 import app.expressiveclock.ui.theme.ClockFace
 import app.expressiveclock.ui.theme.Numerals
 import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.withTimeoutOrNull
+import androidx.compose.ui.platform.LocalSoftwareKeyboardController
+import androidx.compose.ui.platform.LocalFocusManager
 import java.time.DayOfWeek
 import java.time.format.TextStyle as DayTextStyle
 import java.time.temporal.WeekFields
@@ -102,6 +108,39 @@ internal const val SILENT = "silent"
 internal fun systemFirstDay(): DayOfWeek = WeekFields.of(Locale.getDefault()).firstDayOfWeek
 
 internal val AlarmSheetShape = RoundedCornerShape(topStart = 32.dp, topEnd = 32.dp)
+
+/** Capture the dialog's keyboard owner, and retain its window through the IME exit animation. */
+@OptIn(androidx.compose.foundation.layout.ExperimentalLayoutApi::class)
+@Composable
+internal fun rememberAlarmKeyboardDismissal(): suspend () -> Unit {
+    val keyboard = LocalSoftwareKeyboardController.current
+    val focus = LocalFocusManager.current
+    val ime = WindowInsets.ime
+    val animationSource = WindowInsets.imeAnimationSource
+    val density = LocalDensity.current
+    return remember(keyboard, focus, ime, animationSource, density) {
+        {
+            val visible = ime.getBottom(density) > 0
+            keyboard?.hide()
+            focus.clearFocus()
+            if (visible) {
+                // Bound the wait for IMEs that fail to report their final inset.
+                withTimeoutOrNull(1000) {
+                    // The current inset can round to zero before the IME surface
+                    // finishes moving. Compose updates the animation source to
+                    // the hidden destination in its animation-end callback.
+                    snapshotFlow {
+                        ime.getBottom(density) == 0 && animationSource.getBottom(density) == 0
+                    }.first { it }
+                    // Let the completed animation's final frame be presented
+                    // before removing the dialog window that owns the IME.
+                    withFrameNanos { }
+                }
+            }
+            Unit
+        }
+    }
+}
 private val AlarmCardShape = RoundedCornerShape(22.dp)
 private val AlarmControlShape = RoundedCornerShape(18.dp)
 private val TickerItemHeight = 72.dp

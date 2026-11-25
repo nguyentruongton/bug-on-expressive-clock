@@ -19,6 +19,15 @@ import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.platform.LocalView
 import androidx.activity.compose.PredictiveBackHandler
 import androidx.compose.animation.core.Animatable
+import androidx.compose.ui.platform.InterceptPlatformTextInput
+import androidx.compose.ui.platform.PlatformTextInputInterceptor
+import kotlinx.coroutines.CoroutineStart
+import kotlinx.coroutines.awaitCancellation
+import kotlinx.coroutines.withContext
+import androidx.compose.runtime.withFrameNanos
+import androidx.compose.ui.text.input.TextFieldValue
+import androidx.compose.ui.text.TextRange
+import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.runtime.rememberCoroutineScope
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.NonCancellable
@@ -73,7 +82,6 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.WindowInsetsSides
 import androidx.compose.foundation.layout.only
-import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -132,7 +140,6 @@ import androidx.compose.material.icons.automirrored.rounded.ArrowBack
 import androidx.compose.material.icons.automirrored.rounded.ArrowForward
 import androidx.compose.material.icons.rounded.ArrowDownward
 import androidx.compose.material.icons.rounded.ArrowUpward
-import androidx.compose.material.icons.rounded.Check
 import androidx.compose.material.icons.rounded.ChevronRight
 import androidx.compose.material.icons.rounded.Compress
 import androidx.compose.material.icons.rounded.Expand
@@ -1816,6 +1823,23 @@ internal fun SinglePresetEditDialog(
     var minText by remember { mutableStateOf((initialSeconds / 60).toString()) }
     var secText by remember { mutableStateOf((initialSeconds % 60).toString()) }
 
+    val inputScope = rememberCoroutineScope()
+    val inputHandoff = remember(inputScope) {
+        PlatformTextInputInterceptor { request, nextHandler ->
+            // Keep the old session alive until the next field can take it over. Otherwise
+            // a focus transfer can flush a keyboard hide before the new input starts.
+            val session = inputScope.launch(start = CoroutineStart.UNDISPATCHED) {
+                nextHandler.startInputMethod(request)
+            }
+            try {
+                awaitCancellation()
+            } finally {
+                withContext(NonCancellable) { withFrameNanos { } }
+                session.cancel()
+            }
+        }
+    }
+
     val quickOptions = remember {
         listOf(
             15 to "15s",
@@ -1857,27 +1881,22 @@ internal fun SinglePresetEditDialog(
         },
         text = {
             Column(verticalArrangement = Arrangement.spacedBy(16.dp)) {
+                InterceptPlatformTextInput(inputHandoff) {
                 Row(
                     modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.spacedBy(12.dp),
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
-                    OutlinedTextField(
-                        value = minText,
-                        onValueChange = { minText = it.filter { c -> c.isDigit() }.take(3) },
-                        label = { Text("Minutes") },
-                        singleLine = true,
-                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
-                        modifier = Modifier.weight(1f),
+                    PresetNumberField(
+                        value = minText, onValueChange = { minText = it },
+                        label = "Minutes", maxLength = 3, modifier = Modifier.weight(1f),
                     )
-                    OutlinedTextField(
-                        value = secText,
-                        onValueChange = { secText = it.filter { c -> c.isDigit() }.take(2) },
-                        label = { Text("Seconds") },
-                        singleLine = true,
-                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
-                        modifier = Modifier.weight(1f),
+                    PresetNumberField(
+                        value = secText, onValueChange = { secText = it },
+                        label = "Seconds", maxLength = 2, modifier = Modifier.weight(1f),
                     )
+                }
+
                 }
 
                 Text(
@@ -1920,6 +1939,44 @@ internal fun SinglePresetEditDialog(
                 }
             }
         },
+    )
+}
+
+@Composable
+private fun PresetNumberField(
+    value: String,
+    onValueChange: (String) -> Unit,
+    label: String,
+    maxLength: Int,
+    modifier: Modifier = Modifier,
+) {
+    var fieldValue by remember { mutableStateOf(TextFieldValue(value)) }
+    var focused by remember { mutableStateOf(false) }
+    LaunchedEffect(focused) {
+        if (focused) {
+            withFrameNanos { }
+            fieldValue = fieldValue.copy(selection = TextRange(0, fieldValue.text.length))
+        }
+    }
+    LaunchedEffect(value) {
+        if (value != fieldValue.text) {
+            fieldValue = TextFieldValue(value, TextRange(value.length))
+        }
+    }
+    OutlinedTextField(
+        value = fieldValue,
+        onValueChange = { edited ->
+            val filtered = edited.text.filter { it.isDigit() }.take(maxLength)
+            fieldValue = if (filtered == edited.text) edited else edited.copy(
+                text = filtered,
+                selection = TextRange(edited.selection.start.coerceAtMost(filtered.length),
+                    edited.selection.end.coerceAtMost(filtered.length)),
+            )
+            onValueChange(filtered)
+        },
+        label = { Text(label) }, singleLine = true,
+        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+        modifier = modifier.onFocusChanged { focused = it.isFocused },
     )
 }
 

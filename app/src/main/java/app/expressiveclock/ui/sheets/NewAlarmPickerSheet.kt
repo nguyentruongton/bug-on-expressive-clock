@@ -32,11 +32,12 @@ fun NewAlarmPickerSheet(
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
     val scope = rememberCoroutineScope()
     var closing by remember { mutableStateOf(false) }
-    fun closeThen(action: () -> Unit) {
+    fun closeThen(action: () -> Unit, dismissKeyboard: suspend () -> Unit = {}) {
         if (closing) return
         closing = true
         scope.launch {
             try {
+                dismissKeyboard()
                 sheetState.hide()
                 if (!sheetState.isVisible) action()
             } finally { closing = false }
@@ -74,6 +75,7 @@ fun NewAlarmPickerSheet(
         dragHandle = null,
         containerColor = androidx.compose.material3.MaterialTheme.colorScheme.surface,
     ) {
+        val dismissKeyboard = rememberAlarmKeyboardDismissal()
         AlarmEditorDragHandle(sheetState, onDismiss)
         AlarmPickerSheetContent(
             modal = true,
@@ -107,7 +109,7 @@ fun NewAlarmPickerSheet(
             onVibrateChange = { vibrate = it },
             onSoundClick = openSoundSelector,
             onCancel = {
-                closeThen(onDismiss)
+                closeThen(onDismiss, dismissKeyboard)
             },
             onSave = {
                 val saveHour = if (is24Hour) hour else if (pm) (hour % 12) + 12 else hour % 12
@@ -121,7 +123,7 @@ fun NewAlarmPickerSheet(
                     vibrate = vibrate,
                     soundUri = soundUri,
                 )
-                if (updated.dateIssue(java.time.ZonedDateTime.now()) == null) closeThen { onSave(updated) }
+                if (updated.dateIssue(java.time.ZonedDateTime.now()) == null) closeThen(action = { onSave(updated) })
             },
             onDelete = {},
         )

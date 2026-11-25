@@ -1,0 +1,7 @@
+<en-US>
+• Smoother keyboard dismissal when cancelling alarm edits.
+• Added a subtle glow behind running timers.
+• Improved stopwatch glow during page swipes.
+• Timer preset values now select automatically for easy editing.
+• Fixed keyboard and dialog flicker when switching between preset fields.
+</en-US>

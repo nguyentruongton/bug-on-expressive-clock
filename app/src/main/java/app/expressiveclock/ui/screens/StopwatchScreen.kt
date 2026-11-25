@@ -61,6 +61,11 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.layout.onPlaced
+import androidx.compose.ui.layout.onGloballyPositioned
+import androidx.compose.ui.layout.LayoutCoordinates
+import androidx.compose.foundation.layout.offset
+import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.layout.SubcomposeLayout
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.unit.Constraints
@@ -174,10 +179,30 @@ fun StopwatchScreen(
         contentPadding.calculateBottomPadding() + 24.dp
     }
 
-    BoxWithConstraints(modifier.fillMaxSize()) {
+    var lightingRoot by remember { mutableStateOf<LayoutCoordinates?>(null) }
+    var lightingCenter by remember { mutableStateOf<Offset?>(null) }
+    val lightingVisible by remember { derivedStateOf {
+        listState.layoutInfo.visibleItemsInfo.any { it.key == "face" }
+    } }
+    BoxWithConstraints(modifier.fillMaxSize().onPlaced { lightingRoot = it }) {
     val availableFace = (maxHeight - contentPadding.calculateTopPadding() -
         contentPadding.calculateBottomPadding() - 228.dp).coerceAtLeast(120.dp)
     val compactFace = maxWidth < 360.dp || density.fontScale > 1f
+    val originalDiameter = minOf(maxWidth, STOPWATCH_FACE_SIZE, if (compactFace) availableFace else STOPWATCH_FACE_SIZE)
+    val diameter = minOf(originalDiameter, stopwatchFaceDiameter(maxWidth))
+    val fitScale = diameter / STOPWATCH_FACE_SIZE
+    // Draw outside the lazy-list/blur raster bounds without extending their hit areas.
+    if (lightingVisible) {
+        Box(Modifier.offset {
+            val center = lightingCenter ?: Offset.Zero
+            val half = with(density) { STOPWATCH_FACE_SIZE.toPx() / 2f }
+            IntOffset((center.x - half).roundToInt(), (center.y - half).roundToInt())
+        }.requiredSize(STOPWATCH_FACE_SIZE).graphicsLayer {
+            alpha = if (lightingCenter == null) 0f else 1f
+            scaleX = fitScale * faceScale.value
+            scaleY = fitScale * faceScale.value
+        }.clockLighting(MaterialTheme.colorScheme.primary, MaterialTheme.colorScheme.surface.luminance() < .5f))
+    }
     FixedEdgeBlurContainer(
         topInset = contentPadding.calculateTopPadding(),
         bottomInset = contentPadding.calculateBottomPadding(),
@@ -195,16 +220,18 @@ fun StopwatchScreen(
             verticalArrangement = Arrangement.spacedBy(10.dp),
         ) {
             item(key = "face") {
-                BoxWithConstraints(Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) {
-                    val originalDiameter = minOf(maxWidth, STOPWATCH_FACE_SIZE, if (compactFace) availableFace else STOPWATCH_FACE_SIZE)
-                    val diameter = minOf(originalDiameter, stopwatchFaceDiameter(maxWidth))
-                    val fitScale = diameter / STOPWATCH_FACE_SIZE
+                Box(Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) {
                     Box(Modifier.fillMaxWidth().height(originalDiameter + 130.dp), contentAlignment = Alignment.Center) {
                         Box(Modifier.requiredSize(STOPWATCH_FACE_SIZE).graphicsLayer {
                             scaleX = fitScale * faceScale.value
                             scaleY = fitScale * faceScale.value
+                        }.onGloballyPositioned { coordinates ->
+                            lightingRoot?.takeIf { it.isAttached }?.let { root ->
+                                lightingCenter = root.localPositionOf(coordinates,
+                                    Offset(coordinates.size.width / 2f, coordinates.size.height / 2f))
+                            }
                         }) {
-                            StopwatchFace(elapsed.toMillis(), stopwatch.running, onToggle)
+                            StopwatchFace(elapsed.toMillis(), stopwatch.running, onToggle, lighting = false)
                         }
                     }
                 }
@@ -443,7 +470,7 @@ private fun ExpandedStopwatchControls(
 }
 
 @Composable
-private fun StopwatchFace(elapsedMillis: Long, running: Boolean, onToggle: () -> Unit) {
+private fun StopwatchFace(elapsedMillis: Long, running: Boolean, onToggle: () -> Unit, lighting: Boolean = true) {
     val safeMillis = elapsedMillis.coerceAtLeast(0L)
     val hundredths = ((safeMillis % 1000L) / 10L).toInt()
     val minutes = (safeMillis / 60000L).toInt()
@@ -497,7 +524,7 @@ private fun StopwatchFace(elapsedMillis: Long, running: Boolean, onToggle: () ->
     Box(
         modifier = Modifier
             .size(STOPWATCH_FACE_SIZE)
-            .clockLighting(primary, MaterialTheme.colorScheme.surface.luminance() < .5f)
+            .then(if (lighting) Modifier.clockLighting(primary, MaterialTheme.colorScheme.surface.luminance() < .5f) else Modifier)
             .luminousElasticClickable(
                 shape = CircleShape,
                 maxStretchPercent = 0.04f,
