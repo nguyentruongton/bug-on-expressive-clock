@@ -1,0 +1,6 @@
+[Unit]
+Description=Expressive Clock Alarm Trigger (%i)
+
+[Service]
+Type=oneshot
+ExecStart=/usr/lib/expressive-clock/alarm-trigger.sh %i alarm

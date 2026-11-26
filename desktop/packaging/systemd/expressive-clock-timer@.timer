@@ -1,0 +1,8 @@
+[Unit]
+Description=Expressive Clock Countdown Timer (%i)
+
+[Timer]
+AccuracySec=1s
+
+[Install]
+WantedBy=timers.target

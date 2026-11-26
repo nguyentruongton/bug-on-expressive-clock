@@ -1,0 +1,11 @@
+[Desktop Entry]
+Type=Application
+Name=Expressive Clock
+GenericName=Clock
+Comment=Material 3 Expressive Clock, Alarms, World Clock, Timer and Stopwatch
+Exec=/usr/bin/expressive-clock
+Icon=expressive-clock
+Terminal=false
+Categories=Utility;Clock;
+StartupWMClass=app-expressiveclock-DesktopMainKt
+Keywords=clock;alarm;timer;stopwatch;world;time;

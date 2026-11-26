@@ -21,3 +21,8 @@ app/keystore/
 app/release/
 **/__pycache__/
 *.pyc
+
+# Desktop Linux packaging artifacts
+desktop/packaging/pkg/
+desktop/packaging/src/
+desktop/packaging/*.pkg.tar.zst

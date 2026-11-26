@@ -1,0 +1,9 @@
+[Unit]
+Description=Expressive Clock Alarm Timer (%i)
+
+[Timer]
+AccuracySec=1s
+Persistent=true
+
+[Install]
+WantedBy=timers.target

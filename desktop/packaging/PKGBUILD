@@ -1,0 +1,62 @@
+# Maintainer: Expressive Clock Arch Linux Port
+pkgname=expressive-clock
+pkgver=1.0.0
+pkgrel=1
+pkgdesc="Material 3 Expressive Clock ported to Arch Linux Desktop (Compose Multiplatform JVM)"
+arch=('x86_64')
+url="https://github.com/nguyentruongton/bug-on-expressive-clock"
+license=('MIT')
+depends=('java-runtime>=21' 'pipewire' 'libnotify')
+optdepends=(
+    'matugen: Live Material You wallpaper colour synchronization'
+    'zenity: Native Wayland file picker for custom alarm sounds'
+    'mpv: Optional alternative audio playback engine'
+    'socat: Fast Unix socket forwarding for single-instance alarms'
+)
+makedepends=('jdk21-openjdk')
+
+build() {
+    local repo_root
+    repo_root="$(cd "$startdir/../.." && pwd)"
+    cd "$repo_root"
+    ./gradlew -p desktop createDistributable --no-daemon --console=plain
+}
+
+package() {
+    local repo_root
+    repo_root="$(cd "$startdir/../.." && pwd)"
+
+    # Install Compose Desktop distributable bundle (with jlink runtime)
+    install -dm755 "$pkgdir/usr/lib/$pkgname/app"
+    cp -r "$repo_root/desktop/build/compose/binaries/main/app/expressive-clock/"* "$pkgdir/usr/lib/$pkgname/app/"
+
+    # Symlink launcher binary
+    install -dm755 "$pkgdir/usr/bin"
+    ln -s "/usr/lib/$pkgname/app/bin/expressive-clock" "$pkgdir/usr/bin/$pkgname"
+
+    # Install operational scripts
+    install -Dm755 "$repo_root/desktop/scripts/alarm-trigger.sh" "$pkgdir/usr/lib/$pkgname/alarm-trigger.sh"
+
+    # Install fallback alarm audio
+    install -Dm644 "$repo_root/app/src/main/res/raw/alarm_fallback.wav" "$pkgdir/usr/share/$pkgname/alarm_fallback.wav"
+
+    # Install systemd user template units
+    install -Dm644 "$repo_root/desktop/packaging/systemd/expressive-clock-alarm@.timer" \
+        "$pkgdir/usr/lib/systemd/user/expressive-clock-alarm@.timer"
+    install -Dm644 "$repo_root/desktop/packaging/systemd/expressive-clock-alarm@.service" \
+        "$pkgdir/usr/lib/systemd/user/expressive-clock-alarm@.service"
+    install -Dm644 "$repo_root/desktop/packaging/systemd/expressive-clock-timer@.timer" \
+        "$pkgdir/usr/lib/systemd/user/expressive-clock-timer@.timer"
+    install -Dm644 "$repo_root/desktop/packaging/systemd/expressive-clock-timer@.service" \
+        "$pkgdir/usr/lib/systemd/user/expressive-clock-timer@.service"
+
+    # Install desktop entry & application icons
+    install -Dm644 "$repo_root/desktop/packaging/expressive-clock.desktop" \
+        "$pkgdir/usr/share/applications/expressive-clock.desktop"
+    for size in 48 64 128 256 512; do
+        install -Dm644 "$repo_root/desktop/src/main/resources/icons/expressive-clock-${size}.png" \
+            "$pkgdir/usr/share/icons/hicolor/${size}x${size}/apps/expressive-clock.png"
+    done
+    install -Dm644 "$repo_root/desktop/src/main/resources/icons/expressive-clock.svg" \
+        "$pkgdir/usr/share/icons/hicolor/scalable/apps/expressive-clock.svg"
+}
